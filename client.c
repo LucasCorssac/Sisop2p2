@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
 
     int sockfd, n;
 	socklen_t serv_addr_len = sizeof(struct sockaddr_in);
-	struct sockaddr_in brdcst_addr, serv_addr;
+	struct sockaddr_in brdcst_addr, serv_addr, my_addr;
 	int cli_port;
 		
 	char *broadcastIP;
@@ -65,12 +65,12 @@ int main(int argc, char *argv[])
 		debug_print("ID to be used by client: %d\n", id);
 	#else 
 		// GET PORT NUMBER
-		if (argc < 2) {
+		if (argc < 3) {
 			fprintf(stderr, "usage %s <port number>\n", argv[0]);
 			exit(0);
 		}
 		sscanf(argv[1], "%d", &cli_port);
-		debug_print("port given by user: %d\n", cli_port);
+		const char *ip_address = argv[1];
 	#endif	
 	
 
@@ -78,6 +78,20 @@ int main(int argc, char *argv[])
 	// CREATE SOCKET
 	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
 		handle_error("ERROR opening socket");
+
+	// Bind socket to the specified IP address
+    memset(&my_addr, 0, sizeof(my_addr));
+    my_addr.sin_family = AF_INET;
+    my_addr.sin_addr.s_addr = inet_addr(ip_address);
+    my_addr.sin_port = htons(cli_port); // Use any available port
+
+    if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(my_addr)) < 0) {
+        perror("bind");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Bound to IP address: %s\n", ip_address);
 
 	// ADD BROADCAST PERMISSION 
 	broadcastPermission = 1;
@@ -90,6 +104,7 @@ int main(int argc, char *argv[])
 	brdcst_addr.sin_port = htons(cli_port);
 	brdcst_addr.sin_addr.s_addr = inet_addr(broadcastIP);	 
 	bzero(&(brdcst_addr.sin_zero), 8);
+	
 
 	/////// SEARCH FOR SERVER THROUGH BROADCASTING	
 	int found_server = 0;

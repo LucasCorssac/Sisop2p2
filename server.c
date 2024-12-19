@@ -28,8 +28,37 @@
 #include "packet.h"
 
 #define MAX_CLIENTS 10
+#define MAX_REPLICAS 5
 
 void * process_request(void *arg);
+
+enum SERVER_STATE {
+    MASTER,
+	REPLICA,
+	WAITING,
+	ELECTION
+};
+
+
+typedef struct REPLICA_TABLE_CELL
+{
+	int empty;
+	
+	#ifdef DEBUG
+    	int id;
+	#endif
+	
+    struct sockaddr_in cli_addr;
+
+	long long last_seqn;
+    long long last_num_reqs;  
+    long long last_total_sum;
+	long long last_value; 
+
+	packet pckt_cli;
+
+	pthread_mutex_t cli_lock;
+} replica_table_cell;
 
 typedef struct CLIENT_TABLE_CELL
 {
@@ -75,12 +104,13 @@ int sockfd;
 
 int main(int argc, char *argv[])
 {
-
 	debug_print("Debug flag was defined\n");
+
+	enum SERVER_STATE server_state = WAITING;
 
 	int n;
 	socklen_t clilen = sizeof(struct sockaddr_in);
-	struct sockaddr_in serv_addr, cli_addr;
+	struct sockaddr_in brdcst_addr, serv_addr, cli_addr;
 	int serv_port;
 	
 	packet pckt_cli, pckt_ack_disc, pckt_ack_req;
@@ -113,11 +143,12 @@ int main(int argc, char *argv[])
 	// INITIALIZE SHARED VALUES
 	shared_values.total_reqs = 0;
 	shared_values.total_sum = 0;
-		
+
+	// CREATE SOCKET	
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
 		handle_error("ERROR opening socket");
-		
 
+	// GIVE BROADCAST PERMISSION	
 	int broadcastPermission;
 	broadcastPermission = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission, sizeof(broadcastPermission)) < 0)
@@ -134,11 +165,28 @@ int main(int argc, char *argv[])
 		handle_error("ERROR on binding");
 
 
+	//////////////////// SEARCH FOR OTHER SERVERS
+
+	// SET BROADCAST ADDRESS
+	memset(&brdcst_addr, 0, sizeof(brdcst_addr));
+	brdcst_addr.sin_family = AF_INET;     
+	brdcst_addr.sin_port = htons(cli_port);
+	brdcst_addr.sin_addr.s_addr = inet_addr("255.255.255.255");	 // broadcast IP
+	bzero(&(brdcst_addr.sin_zero), 8);
+
+	// SET SOCKET REQUEST TIMEOUT PARAMETERS
+	struct timeval timeout = {.tv_sec = 0, .tv_usec = 10000}; // 10 ms
+
+	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+		perror("setsockopt failed");
+	}	
+
+
 	// PRINT INITIALIZATION MESSSAGE
 	print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
 		
-	while (1) {
-		
+	while (1) 
+	{
 		// WAIT FOR PACKETS
 		n = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
 		if (n < 0)

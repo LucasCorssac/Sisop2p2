@@ -2,7 +2,9 @@ typedef enum PACKET_TYPE {
     DISC,
     REQ,
     DISC_ACK,
-    REQ_ACK 
+    REQ_ACK,
+    SERV_DISC,
+    SERV_FOUND_ALL 
 } packet_type;
 
 struct requisicao
@@ -25,6 +27,7 @@ typedef struct __packet
     packet_type type;
     union
     {
+        time_t timestamp;
         struct requisicao req;
         struct requisicao_ack ack;
     };

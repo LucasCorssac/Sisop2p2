@@ -28,7 +28,7 @@
 #include "packet.h"
 
 #define MAX_CLIENTS 10
-#define MAX_REPLICAS 5
+#define MAX_REPLICAS 4
 
 void * process_request(void *arg);
 
@@ -92,6 +92,12 @@ client_table_cell client_table[MAX_CLIENTS];
 
 pthread_mutex_t shared_lock;
 
+struct SERVER_CELL
+{
+	struct sockaddr_in serv_addr;
+	time_t timestamp;	
+};
+
 void print_timestamp()
 {
 	time_t t = time(NULL);
@@ -108,10 +114,12 @@ int main(int argc, char *argv[])
 
 	enum SERVER_STATE server_state = WAITING;
 
+	time_t my_timestamp = time(NULL);
+
 	int n;
 	socklen_t clilen = sizeof(struct sockaddr_in);
-	struct sockaddr_in brdcst_addr, serv_addr, cli_addr;
-	int serv_port;
+	struct sockaddr_in brdcst_addr, my_addr, cli_addr, serv_addr;
+	int my_port;
 	
 	packet pckt_cli, pckt_ack_disc, pckt_ack_req;
 	
@@ -120,8 +128,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "usage %s <port number>\n", argv[0]);
 		exit(1);
 	}
-	sscanf(argv[1], "%d", &serv_port);
-	debug_print("port given by user: %d\n", serv_port);
+	sscanf(argv[1], "%d", &my_port);
+	debug_print("port given by user: %d\n", my_port);
 
 
 	// INITIALIZE MUTEX    
@@ -154,15 +162,15 @@ int main(int argc, char *argv[])
 	if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission, sizeof(broadcastPermission)) < 0)
 		handle_error("setsockopt error");	
 
-	// BIND SOCKET
-	memset(&serv_addr, 0, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(serv_port);
-	serv_addr.sin_addr.s_addr = INADDR_ANY;
-	bzero(&(serv_addr.sin_zero), 8);    
+	// // BIND SOCKET
+	// memset(&my_addr, 0, sizeof(my_addr));
+	// my_addr.sin_family = AF_INET;
+	// my_addr.sin_port = htons(my_port);
+	// my_addr.sin_addr.s_addr = INADDR_ANY;
+	// bzero(&(my_addr.sin_zero), 8);    
 	 
-	if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
-		handle_error("ERROR on binding");
+	// if (bind(sockfd, (struct sockaddr *) &my_addr, sizeof(my_addr)) < 0) 
+	// 	handle_error("ERROR on binding");
 
 
 	//////////////////// SEARCH FOR OTHER SERVERS
@@ -170,7 +178,7 @@ int main(int argc, char *argv[])
 	// SET BROADCAST ADDRESS
 	memset(&brdcst_addr, 0, sizeof(brdcst_addr));
 	brdcst_addr.sin_family = AF_INET;     
-	brdcst_addr.sin_port = htons(cli_port);
+	brdcst_addr.sin_port = htons(my_port);
 	brdcst_addr.sin_addr.s_addr = inet_addr("255.255.255.255");	 // broadcast IP
 	bzero(&(brdcst_addr.sin_zero), 8);
 
@@ -181,6 +189,50 @@ int main(int argc, char *argv[])
 		perror("setsockopt failed");
 	}	
 
+	packet pckt_serv_rply, pckt_serv_disc;
+	socklen_t serv_addr_len;
+
+	pckt_serv_disc.type = SERV_DISC;
+	pckt_serv_disc.timestamp = my_timestamp;
+
+	struct SERVER_CELL server_list[MAX_REPLICAS];
+
+	int found_replicas = 0;
+	int found_alls = 0;
+	printf("searching for servers!\n");
+	do
+	{
+		if (found_replicas >= MAX_REPLICAS)
+			pckt_serv_disc.type = SERV_FOUND_ALL;
+
+		n = sendto(sockfd, &pckt_serv_disc, sizeof(packet), 0, (struct sockaddr *) &brdcst_addr, sizeof(brdcst_addr));
+		if (n < 0)
+			handle_error("ERROR sendto\n");
+				
+		// WAIT FOR OTHER SERVERS
+		n = recvfrom(sockfd, &pckt_serv_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
+		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+			handle_error("ERROR recvfrom\n");
+
+		// CHECK IF SERVER SENT CORRECT RESPONSE
+		if (pckt_serv_rply.type == SERV_DISC && found_replicas < MAX_REPLICAS)
+		{
+			print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
+			server_list[found_replicas].serv_addr = serv_addr;
+			server_list[found_replicas].timestamp = pckt_serv_rply.timestamp;
+			found_replicas += 1;
+		}
+		else if (pckt_serv_rply.type == SERV_FOUND_ALL)
+		{
+			print_timestamp(); printf("GOT FOUND ALL FROM: %s\n", inet_ntoa(serv_addr.sin_addr));
+			found_alls++;
+		}
+
+	} while (found_alls < MAX_REPLICAS);
+
+	printf("ALL SERVERS FOUND \n");
+	while(1){}
+	
 
 	// PRINT INITIALIZATION MESSSAGE
 	print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);

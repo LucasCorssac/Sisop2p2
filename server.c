@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
+#include <ifaddrs.h>
 
 #include "packet.h"
 
@@ -108,6 +109,60 @@ void print_timestamp()
 
 int sockfd;
 
+// Function to get the server's IP address
+void get_server_ip(char *ip_buffer, size_t buffer_size) {
+    struct ifaddrs *ifaddr, *ifa;
+    int family;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        exit(EXIT_FAILURE);
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+
+        if (family == AF_INET) {
+            if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+                            ip_buffer, buffer_size, NULL, 0, NI_NUMERICHOST) == 0) {
+                // Print the IP address of the interface
+                printf("Interface: %s\tAddress: %s\n", ifa->ifa_name, ip_buffer);
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+}
+
+void get_interface_ip(const char *interface, char *ip_buffer, size_t buffer_size) {
+    struct ifaddrs *ifaddr, *ifa;
+    int family;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        exit(EXIT_FAILURE);
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+
+        if (family == AF_INET && strcmp(ifa->ifa_name, interface) == 0) {
+            if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+                            ip_buffer, buffer_size, NULL, 0, NI_NUMERICHOST) == 0) {
+                break;
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+}
+
 int main(int argc, char *argv[])
 {
 	debug_print("Debug flag was defined\n");
@@ -160,27 +215,31 @@ int main(int argc, char *argv[])
 	int broadcastPermission;
 	broadcastPermission = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission, sizeof(broadcastPermission)) < 0)
-		handle_error("setsockopt error");	
+		handle_error("setsockopt error");
+
+	int reuseAddr = 1;
+	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuseAddr, sizeof(reuseAddr));
+	
 
 	// // BIND SOCKET
-	// memset(&my_addr, 0, sizeof(my_addr));
-	// my_addr.sin_family = AF_INET;
-	// my_addr.sin_port = htons(my_port);
-	// my_addr.sin_addr.s_addr = INADDR_ANY;
-	// bzero(&(my_addr.sin_zero), 8);    
-	 
-	// if (bind(sockfd, (struct sockaddr *) &my_addr, sizeof(my_addr)) < 0) 
-	// 	handle_error("ERROR on binding");
+	memset(&my_addr, 0, sizeof(my_addr));
+	my_addr.sin_family = AF_INET;
+	my_addr.sin_port = htons(my_port);
+	my_addr.sin_addr.s_addr = INADDR_ANY;  
 
+	if (bind(sockfd, (struct sockaddr *) &my_addr, sizeof(my_addr)) < 0) 
+		handle_error("ERROR on binding");
 
 	//////////////////// SEARCH FOR OTHER SERVERS
+
+	char *broadcastIP;
+	broadcastIP = "255.255.255.255";
 
 	// SET BROADCAST ADDRESS
 	memset(&brdcst_addr, 0, sizeof(brdcst_addr));
 	brdcst_addr.sin_family = AF_INET;     
-	brdcst_addr.sin_port = htons(my_port);
-	brdcst_addr.sin_addr.s_addr = inet_addr("255.255.255.255");	 // broadcast IP
-	bzero(&(brdcst_addr.sin_zero), 8);
+	brdcst_addr.sin_port =  htons(my_port);
+	brdcst_addr.sin_addr.s_addr = inet_addr(broadcastIP);	 // broadcast IP
 
 	// SET SOCKET REQUEST TIMEOUT PARAMETERS
 	struct timeval timeout = {.tv_sec = 0, .tv_usec = 10000}; // 10 ms
@@ -190,37 +249,66 @@ int main(int argc, char *argv[])
 	}	
 
 	packet pckt_serv_rply, pckt_serv_disc;
-	socklen_t serv_addr_len;
+	socklen_t serv_addr_len = sizeof(serv_addr);
 
 	pckt_serv_disc.type = SERV_DISC;
 	pckt_serv_disc.timestamp = my_timestamp;
 
 	struct SERVER_CELL server_list[MAX_REPLICAS];
 
+
+	// GET SERVER'S OWN IP
+	char ip_buffer[NI_MAXHOST];
+
+	// // Get the server's IP address
+    // get_server_ip(ip_buffer, sizeof(ip_buffer));
+    // printf("Server IP: %s\n", ip_buffer);
+
+    // Get the IP address of the eth0 interface
+    get_interface_ip("eth0", ip_buffer, sizeof(ip_buffer));
+    printf("IP address of eth0: %s\n", ip_buffer);
+
 	int found_replicas = 0;
 	int found_alls = 0;
+	int server_already_found = 0;
 	printf("searching for servers!\n");
 	do
 	{
 		if (found_replicas >= MAX_REPLICAS)
 			pckt_serv_disc.type = SERV_FOUND_ALL;
-
+		
+		//printf("sending message\n");
 		n = sendto(sockfd, &pckt_serv_disc, sizeof(packet), 0, (struct sockaddr *) &brdcst_addr, sizeof(brdcst_addr));
 		if (n < 0)
 			handle_error("ERROR sendto\n");
-				
+
 		// WAIT FOR OTHER SERVERS
+		//printf("waiting reply\n");
 		n = recvfrom(sockfd, &pckt_serv_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
 
 		// CHECK IF SERVER SENT CORRECT RESPONSE
-		if (pckt_serv_rply.type == SERV_DISC && found_replicas < MAX_REPLICAS)
+		if (pckt_serv_rply.type == SERV_DISC && strcmp(ip_buffer, inet_ntoa(serv_addr.sin_addr)) != 0 && found_replicas < MAX_REPLICAS) //my_addr.sin_addr.s_addr != serv_addr.sin_addr.s_addr &&
 		{
-			print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
-			server_list[found_replicas].serv_addr = serv_addr;
-			server_list[found_replicas].timestamp = pckt_serv_rply.timestamp;
-			found_replicas += 1;
+			//printf("Got reply, checking if severs been registerd already\n");
+			server_already_found = 0;
+			for (int i = 0; i < found_replicas; i++)
+			{
+				if (strcmp(inet_ntoa(server_list[i].serv_addr.sin_addr), inet_ntoa(serv_addr.sin_addr)) == 0)
+				{
+					//printf("server has been found before\n");
+					server_already_found = 1;
+					break;
+				}
+			}
+			if (!server_already_found)
+			{
+				print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
+				server_list[found_replicas].serv_addr = serv_addr;
+				server_list[found_replicas].timestamp = pckt_serv_rply.timestamp;
+				found_replicas += 1;
+			}			
 		}
 		else if (pckt_serv_rply.type == SERV_FOUND_ALL)
 		{

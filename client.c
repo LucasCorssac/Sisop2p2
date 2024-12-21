@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 	/////// SEARCH FOR SERVER THROUGH BROADCASTING	
 	int found_server = 0;
 	
-	pckt_disc.type = SERV_DISC;
+	pckt_disc.type = DISC;
 	#ifdef DEBUG
     	pckt_disc.id = id;
 	#endif

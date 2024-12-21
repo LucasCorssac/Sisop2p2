@@ -96,7 +96,8 @@ pthread_mutex_t shared_lock;
 struct SERVER_CELL
 {
 	struct sockaddr_in serv_addr;
-	time_t timestamp;	
+	time_t timestamp;
+	int found_all;	
 };
 
 void print_timestamp()
@@ -255,6 +256,10 @@ int main(int argc, char *argv[])
 	pckt_serv_disc.timestamp = my_timestamp;
 
 	struct SERVER_CELL server_list[MAX_REPLICAS];
+	for (int i = 0; i < MAX_REPLICAS; i++)
+	{
+		server_list[i].found_all = 0;
+	}
 
 
 	// GET SERVER'S OWN IP
@@ -287,35 +292,49 @@ int main(int argc, char *argv[])
 		n = recvfrom(sockfd, &pckt_serv_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
-
-		// CHECK IF SERVER SENT CORRECT RESPONSE
-		if (pckt_serv_rply.type == SERV_DISC && strcmp(ip_buffer, inet_ntoa(serv_addr.sin_addr)) != 0 && found_replicas < MAX_REPLICAS) //my_addr.sin_addr.s_addr != serv_addr.sin_addr.s_addr &&
+		if (inet_addr(ip_buffer) != serv_addr.sin_addr.s_addr)
 		{
-			//printf("Got reply, checking if severs been registerd already\n");
-			server_already_found = 0;
-			for (int i = 0; i < found_replicas; i++)
+			// CHECK IF SERVER SENT CORRECT RESPONSE
+			if (pckt_serv_rply.type == SERV_DISC && found_replicas < MAX_REPLICAS) // strcmp(ip_buffer, inet_ntoa(serv_addr.sin_addr)) != 0
 			{
-				if (strcmp(inet_ntoa(server_list[i].serv_addr.sin_addr), inet_ntoa(serv_addr.sin_addr)) == 0)
+				//printf("Got reply, checking if severs been registerd already\n");
+				server_already_found = 0;
+				for (int i = 0; i < found_replicas; i++)
 				{
-					//printf("server has been found before\n");
-					server_already_found = 1;
-					break;
+					//if (strcmp(inet_ntoa(server_list[i].serv_addr.sin_addr), inet_ntoa(serv_addr.sin_addr)) == 0)
+					if (server_list[i].serv_addr.sin_addr.s_addr == serv_addr.sin_addr.s_addr)
+					{
+						//printf("server has been found before\n");
+						server_already_found = 1;
+						break;
+					}
+				}
+				if (!server_already_found)
+				{
+					print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
+					server_list[found_replicas].serv_addr = serv_addr;
+					server_list[found_replicas].timestamp = pckt_serv_rply.timestamp;
+					found_replicas += 1;
+				}			
+			}
+			else if (pckt_serv_rply.type == SERV_FOUND_ALL)
+			{
+				for (int i = 0; i < found_replicas; i++)
+				{
+					//if (strcmp(inet_ntoa(server_list[i].serv_addr.sin_addr), inet_ntoa(serv_addr.sin_addr)) == 0)
+					if (server_list[i].serv_addr.sin_addr.s_addr == serv_addr.sin_addr.s_addr)
+					{
+						if(!server_list[i].found_all)
+						{
+							server_list[i].found_all = 1;
+							print_timestamp(); printf("GOT FOUND ALL FROM: %s\n", inet_ntoa(serv_addr.sin_addr));
+							found_alls++;
+						}
+					}
 				}
 			}
-			if (!server_already_found)
-			{
-				print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
-				server_list[found_replicas].serv_addr = serv_addr;
-				server_list[found_replicas].timestamp = pckt_serv_rply.timestamp;
-				found_replicas += 1;
-			}			
-		}
-		else if (pckt_serv_rply.type == SERV_FOUND_ALL)
-		{
-			print_timestamp(); printf("GOT FOUND ALL FROM: %s\n", inet_ntoa(serv_addr.sin_addr));
-			found_alls++;
-		}
 
+		}
 	} while (found_alls < MAX_REPLICAS);
 
 	printf("ALL SERVERS FOUND \n");

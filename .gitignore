@@ -5,3 +5,4 @@ Dockerfile*
 *.pdf
 TODO*
 test.c
+dumpster/

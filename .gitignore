@@ -1,3 +1,7 @@
 *.exe
 client
 server
+Dockerfile*
+*.pdf
+TODO*
+test.c

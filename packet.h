@@ -27,7 +27,7 @@ typedef struct __packet
     packet_type type;
     union
     {
-        time_t timestamp;
+        struct sockaddr_in serv_addr;
         struct requisicao req;
         struct requisicao_ack ack;
     };

@@ -1,4 +1,5 @@
 typedef enum PACKET_TYPE {
+    NULLPCKT,
     DISC,
     REQ,
     DISC_ACK,

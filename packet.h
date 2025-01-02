@@ -4,7 +4,10 @@ typedef enum PACKET_TYPE {
     DISC_ACK,
     REQ_ACK,
     SERV_DISC,
-    SERV_FOUND_ALL 
+    SERV_FOUND_ALL,
+    YOU_ARE_LEADER,
+    I_AM_LEADER,
+    AM_LEADER_ACK
 } packet_type;
 
 struct requisicao

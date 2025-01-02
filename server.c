@@ -334,7 +334,7 @@ int main(int argc, char *argv[])
 
 	printf("ALL SERVERS FOUND \n");
 
-	// ELECT LEADER
+	// GET LEADER BASED ON IP
 	int leader_idx = 0;
 	for (int i = 0; i < num_servers; i++)
 	{
@@ -342,26 +342,66 @@ int main(int argc, char *argv[])
 		{
 			leader_idx = i;
 		}
-	
-	
 	}
 	printf("Leader is: %s\n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 
+	// SEND YOU ARE LEADER MESSAGE
+	packet pckt_post_sync, pckt_psync_rply;
+	pckt_post_sync.type = 	YOU_ARE_LEADER;
+	do
+	{
+		n = sendto(sockfd, &pckt_post_sync, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+		if (n < 0)
+			handle_error("ERROR sendto\n");
+
+		n = recvfrom(sockfd, &pckt_psync_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
+		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+			handle_error("ERROR recvfrom\n");
+	}
+	while(n < 0 && ((pckt_psync_rply.type != YOU_ARE_LEADER) || (pckt_psync_rply.type != I_AM_LEADER))) // SEGUIR PARA O PROCESSAMENTO
+
+	// POTENTIALLY MOVE TO USE STATE MACHINE
 	
-	// packet pckt_leader;
-	// pckt_leader.type = 
+	// WAIT FOR YOU ARE LEADER
+	if (pckt_psync_rply.type == YOU_ARE_LEADER)
+	{
+		//SET MY OWN ADDRESS
+		my_addr =  server_list[leader_idx].serv_addr;
+		
+		// SEGUIR PARA O PROCESSAMENTO
+		// RESPONDER PARA O CLIENTE
+		// COMEÇAR A REENCAMINHAR OS PACONTES PARA AS REPLICAS
 
-	// n = sendto(sockfd, &pckt_serv_disc, sizeof(packet), 0, (struct sockaddr *) &brdcst_addr, sizeof(brdcst_addr));
-	// if (n < 0)
-	// 	handle_error("ERROR sendto\n");
+		// SEND I AM LEADER
+		for(int i = 0; i < num_servers; i++)
+		{
+			if (i != leader_idx)
+			{
+				packet pckt_am_leader, pckt_am_leader_ack;
+				pckt_am_leader.type = I_AM_LEADER;
+				pckt_am_leader.serv_addr = server_list[i].serv_addr;
+				do
+				{
+					n = sendto(sockfd, &pckt_am_leader, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+					if (n < 0)
+						handle_error("ERROR sendto\n");
 
-	// // WAIT FOR OTHER SERVERS
-	// //printf("waiting reply\n");
-	// n = recvfrom(sockfd, &pckt_serv_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
-	// if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
-	// 	handle_error("ERROR recvfrom\n");
+					n = recvfrom(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
+					if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+						handle_error("ERROR recvfrom\n");
+					
+				} while (n < 0 && pckt_am_leader_ack.type != AM_LEADER_ACK && serv_addr.sin_addr.s_addr != server_list[i].serv_addr.sin_addr.s_addr)
+			}			
+		}
+		// WAIT FOR ACKS
+	}
+	// WAIT FOR I AM LEADER
+	else if(pckt_psync_rply.type == I_AM_LEADER)
+	{
+		//SET MY OWN ADDRESS
+		my_addr =  pckt_psync_rply.serv_addr;
 
-
+	}
 	
 	while(1){}
 	
@@ -373,40 +413,8 @@ int main(int argc, char *argv[])
 	{
 		// WAIT FOR PACKETS
 		n = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
-		if (n < 0)
-		{
-			switch (errno)
-			{
-			case EBADF:
-				printf("ERROR EBADF\n");
-				break;
-			case ECONNREFUSED:
-				printf("ERROR ECONNREFUSED\n");
-				break;
-			case EFAULT:
-				printf("ERROR EFAULT\n");
-				break;
-			case EINTR:
-				printf("ERROR EINTR\n");
-				break;
-			case EINVAL:
-				printf("ERROR EINVAL\n");
-				break;
-			case ENOMEM:
-				printf("ERROR ENOMEM\n");
-				break;
-			case ENOTCONN:
-				printf("ERROR ENOTCONN\n");
-				break;
-			case ENOTSOCK:
-				printf("ERROR ENOTSOCK\n");
-				break;	
-			default:
-				printf("ERROR NOT SPECIFIED recvfrom\n");
-				break;
-			}
+		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR on recvfrom\n");
-		}
 		
 		// PROCESS PACKET
 		switch (pckt_cli.type)

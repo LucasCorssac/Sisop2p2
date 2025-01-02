@@ -358,7 +358,7 @@ int main(int argc, char *argv[])
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
 	}
-	while(n < 0 && ((pckt_psync_rply.type != YOU_ARE_LEADER) || (pckt_psync_rply.type != I_AM_LEADER))) // SEGUIR PARA O PROCESSAMENTO
+	while(n < 0 && ((pckt_psync_rply.type != YOU_ARE_LEADER) || (pckt_psync_rply.type != I_AM_LEADER))); // SEGUIR PARA O PROCESSAMENTO
 
 	// POTENTIALLY MOVE TO USE STATE MACHINE
 	
@@ -367,33 +367,35 @@ int main(int argc, char *argv[])
 	{
 		//SET MY OWN ADDRESS
 		my_addr =  server_list[leader_idx].serv_addr;
+
+		printf("GOT YOU ARE LEADER\n");
 		
 		// SEGUIR PARA O PROCESSAMENTO
 		// RESPONDER PARA O CLIENTE
 		// COMEÇAR A REENCAMINHAR OS PACONTES PARA AS REPLICAS
 
-		// SEND I AM LEADER
-		for(int i = 0; i < num_servers; i++)
-		{
-			if (i != leader_idx)
-			{
-				packet pckt_am_leader, pckt_am_leader_ack;
-				pckt_am_leader.type = I_AM_LEADER;
-				pckt_am_leader.serv_addr = server_list[i].serv_addr;
-				do
-				{
-					n = sendto(sockfd, &pckt_am_leader, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
-					if (n < 0)
-						handle_error("ERROR sendto\n");
+		// // SEND I AM LEADER
+		// for(int i = 0; i < num_servers; i++)
+		// {
+		// 	if (i != leader_idx)
+		// 	{
+		// 		packet pckt_am_leader, pckt_am_leader_ack;
+		// 		pckt_am_leader.type = I_AM_LEADER;
+		// 		pckt_am_leader.serv_addr = server_list[i].serv_addr;
+		// 		do
+		// 		{
+		// 			n = sendto(sockfd, &pckt_am_leader, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+		// 			if (n < 0)
+		// 				handle_error("ERROR sendto\n");
 
-					n = recvfrom(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
-					if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
-						handle_error("ERROR recvfrom\n");
+		// 			n = recvfrom(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
+		// 			if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+		// 				handle_error("ERROR recvfrom\n");
 					
-				} while (n < 0 && pckt_am_leader_ack.type != AM_LEADER_ACK && serv_addr.sin_addr.s_addr != server_list[i].serv_addr.sin_addr.s_addr)
-			}			
-		}
-		// WAIT FOR ACKS
+		// 		} while (n < 0 && pckt_am_leader_ack.type != AM_LEADER_ACK && serv_addr.sin_addr.s_addr != server_list[i].serv_addr.sin_addr.s_addr)
+		// 	}			
+		// }
+		// // WAIT FOR ACKS
 	}
 	// WAIT FOR I AM LEADER
 	else if(pckt_psync_rply.type == I_AM_LEADER)

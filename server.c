@@ -96,7 +96,8 @@ pthread_mutex_t shared_lock;
 struct SERVER_CELL
 {
 	struct sockaddr_in serv_addr;
-	int found_all;	
+	int found_all;
+	int alive;
 };
 
 void print_timestamp()
@@ -313,6 +314,7 @@ int main(int argc, char *argv[])
 			{
 				print_timestamp(); printf("FOUND SERVER AT: %s\n", inet_ntoa(serv_addr.sin_addr));
 				server_list[found_servers].serv_addr = serv_addr;
+				server_list[found_servers].alive = 1;
 				found_servers += 1;
 			}			
 		}
@@ -332,14 +334,15 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-		else if (pckt_serv_rply.type == I_AM_LEADER)
+		else if (pckt_serv_rply.type == I_AM_LEADER || pckt_serv_rply.type == YOU_ARE_LEADER)
 		{
-			goto am_leader_late;
+			//goto am_leader_late;
+			found_alls = num_servers;
 		}
-		else if (pckt_serv_rply.type == YOU_ARE_LEADER)
-		{
-			goto you_are_leader_late;
-		}
+		// else if ()
+		// {
+		// 	goto you_are_leader_late;
+		// }
 	} while (found_alls < num_servers);
 
 	printf("ALL SERVERS FOUND \n");
@@ -365,8 +368,7 @@ int main(int argc, char *argv[])
 	do
 	{
 		printf("Sending you are leader message!\n");
-		n = sendto(sockfd, &pckt_post_sync, sizeof(packet), 0, (struct sockaddr *) &leader_addr, serv_addr_len);
-		printf("n: %d", n);		
+		n = sendto(sockfd, &pckt_post_sync, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, serv_addr_len);
 		if (n < 0)
 			handle_error("ERROR sendto\n");
 
@@ -374,27 +376,24 @@ int main(int argc, char *argv[])
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
 		
-		if (pckt_psync_rply.type == YOU_ARE_LEADER)
-		{
-			printf("got you are leader\n");
-		}
-		
-		sleep(2);
+		//usleep(500000);
 	}
-	while(n < 0 || (pckt_psync_rply.type != YOU_ARE_LEADER) || (pckt_psync_rply.type != I_AM_LEADER)); // SEGUIR PARA O PROCESSAMENTO
+	while(n < 0 || (pckt_psync_rply.type != YOU_ARE_LEADER && pckt_psync_rply.type != I_AM_LEADER));
 
 	// POTENTIALLY MOVE TO USE STATE MACHINE
 	
 	// WAIT FOR YOU ARE LEADER
 	if (pckt_psync_rply.type == YOU_ARE_LEADER)
 	{
-you_are_leader_late:
+//you_are_leader_late:
 
 		printf("GOT YOU ARE LEADER\n");
 
 		//SET MY OWN ADDRESS
 		my_addr =  server_list[leader_idx].serv_addr;
 		server_state = LEADER;
+
+		printf("sending I AM LEADER!\n");
 
 		// SEND I AM LEADER
 		for(int i = 0; i < num_servers; i++)
@@ -403,6 +402,7 @@ you_are_leader_late:
 			{
 				packet pckt_am_leader, pckt_am_leader_ack;
 				pckt_am_leader.type = I_AM_LEADER;
+				printf("i: %d\n",i);
 				pckt_am_leader.serv_addr = server_list[i].serv_addr;
 				do
 				{
@@ -423,9 +423,10 @@ you_are_leader_late:
 	// WAIT FOR I AM LEADER
 	else if (pckt_psync_rply.type == I_AM_LEADER)
 	{
-am_leader_late:
-		printf ("GOT I AM LEADER!\n");
+//am_leader_late:
+		printf ("GOT AN I AM LEADER MESSAGE!\n");
 		my_addr = pckt_psync_rply.serv_addr;
+		server_state = REPLICA;
 
 		packet pckt_am_leader_ack;
 		pckt_am_leader_ack.type = AM_LEADER_ACK;
@@ -438,11 +439,8 @@ am_leader_late:
 		}while(1);
 	}
 
-	printf("End of leader stuff\n");
+	printf("End of synchronization\n");
 	
-	while(1){}
-	
-
 	// PRINT INITIALIZATION MESSSAGE
 	print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
 		
@@ -452,78 +450,80 @@ am_leader_late:
 		n = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR on recvfrom\n");
-		
-		// PROCESS PACKET
-		switch (pckt_cli.type)
+		if (server_state == LEADER)
 		{
-			case DISC:
-				debug_print("Found a discovery!\n");
-				// ADD CLIENT TO CLIENT TABLE
-				int client_already_exists = -1;
-				int empty_slot = -1;
-				for(int i = 0; i < MAX_CLIENTS; i++)
-				{
-					#ifdef DEBUG
-						if(!client_table[i].empty && client_table[i].id == pckt_cli.id)
-							client_already_exists = i;
-					#else
-						if(!client_table[i].empty &&
-							client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-							client_already_exists = i;
-					#endif
-					if(empty_slot == -1 && client_table[i].empty)
-						empty_slot = i;
-				}
-				if (client_already_exists == -1 && empty_slot != -1)
-				{
-					debug_print("sending DISC ACK\n");
-					#ifdef DEBUG
-						client_table[empty_slot].id = pckt_cli.id;
-					#endif	
-					client_table[empty_slot].empty = 0;
-					client_table[empty_slot].cli_addr = cli_addr;
+			// PROCESS PACKET
+			switch (pckt_cli.type)
+			{
+				case DISC:
+					debug_print("Found a discovery!\n");
+					// ADD CLIENT TO CLIENT TABLE
+					int client_already_exists = -1;
+					int empty_slot = -1;
+					for(int i = 0; i < MAX_CLIENTS; i++)
+					{
+						#ifdef DEBUG
+							if(!client_table[i].empty && client_table[i].id == pckt_cli.id)
+								client_already_exists = i;
+						#else
+							if(!client_table[i].empty &&
+								client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+								client_already_exists = i;
+						#endif
+						if(empty_slot == -1 && client_table[i].empty)
+							empty_slot = i;
+					}
+					if (client_already_exists == -1 && empty_slot != -1)
+					{
+						debug_print("sending DISC ACK\n");
+						#ifdef DEBUG
+							client_table[empty_slot].id = pckt_cli.id;
+						#endif	
+						client_table[empty_slot].empty = 0;
+						client_table[empty_slot].cli_addr = cli_addr;
 
-					// SEND ACK
-					pckt_ack_disc.type = DISC_ACK;
-					n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
-					if (n  < 0)
-						handle_error("ERROR on sendto");					
-				}
+						// SEND ACK
+						pckt_ack_disc.type = DISC_ACK;
+						n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+						if (n  < 0)
+							handle_error("ERROR on sendto");					
+					}
+					break;
+				case REQ:
+					// FIND CLIENT IN TABLE
+					debug_print("Found a REQ\n");
+					int cli_cell = -1, i = 0;
+					do
+					{
+						#ifdef DEBUG
+							if (client_table[i].id == pckt_cli.id)
+							{
+								cli_cell = i;
+								client_table[cli_cell].pckt_cli = pckt_cli;
+							}
+						#else
+							if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							{
+								cli_cell = i;
+								client_table[cli_cell].pckt_cli = pckt_cli;
+							}
+						#endif
+						i++;
+					} while (cli_cell == -1 && i < MAX_CLIENTS);
+					
+					// CREATE THREAD TO HANDLE REQUEST
+					if (cli_cell != -1)
+					{
+						pthread_t id;
+						int* cli_cell_ptr = malloc(sizeof(int));
+						*cli_cell_ptr = cli_cell;
+						n = pthread_create(&id, NULL, &process_request, cli_cell_ptr);
+						if (n != 0)
+							handle_error("Error creating thread\n");
+					}
 				break;
-			case REQ:
-				// FIND CLIENT IN TABLE
-				debug_print("Found a REQ\n");
-				int cli_cell = -1, i = 0;
-				do
-				{
-					#ifdef DEBUG
-						if (client_table[i].id == pckt_cli.id)
-						{
-							cli_cell = i;
-							client_table[cli_cell].pckt_cli = pckt_cli;
-						}
-					#else
-						if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-						{
-							cli_cell = i;
-							client_table[cli_cell].pckt_cli = pckt_cli;
-						}
-					#endif
-					i++;
-				} while (cli_cell == -1 && i < MAX_CLIENTS);
-				
-				// CREATE THREAD TO HANDLE REQUEST
-				if (cli_cell != -1)
-				{
-					pthread_t id;
-					int* cli_cell_ptr = malloc(sizeof(int));
-					*cli_cell_ptr = cli_cell;
-					n = pthread_create(&id, NULL, &process_request, cli_cell_ptr);
-					if (n != 0)
-						handle_error("Error creating thread\n");
-				}
-			break;
-		} 		
+			} 		
+		}
 	}
 
 	// DESTROY MUTEXES 

@@ -99,6 +99,7 @@ struct SERVER_CELL
 	struct sockaddr_in serv_addr;
 	int found_all;
 	int alive;
+	int leader;
 };
 
 void print_timestamp()
@@ -360,6 +361,7 @@ int main(int argc, char *argv[])
 			leader_addr = server_list[i].serv_addr;
 		}
 	}
+	server_list[leader_idx].leader = 1;
 	printf("Leader is: %s\n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 
 	// SEND YOU ARE LEADER MESSAGE
@@ -456,23 +458,17 @@ int main(int argc, char *argv[])
 					int empty_slot = -1;
 					for(int i = 0; i < MAX_CLIENTS; i++)
 					{
-						#ifdef DEBUG
-							if(!client_table[i].empty && client_table[i].id == pckt_cli.id)
-								client_already_exists = i;
-						#else
-							if(!client_table[i].empty &&
-								client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-								client_already_exists = i;
-						#endif
+						if(!client_table[i].empty &&
+							client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							client_already_exists = i;
+						
 						if(empty_slot == -1 && client_table[i].empty)
 							empty_slot = i;
 					}
 					if (client_already_exists == -1 && empty_slot != -1)
 					{
 						debug_print("sending DISC ACK\n");
-						#ifdef DEBUG
-							client_table[empty_slot].id = pckt_cli.id;
-						#endif	
+
 						client_table[empty_slot].empty = 0;
 						client_table[empty_slot].cli_addr = cli_addr;
 
@@ -489,19 +485,11 @@ int main(int argc, char *argv[])
 					int cli_cell = -1, i = 0;
 					do
 					{
-						#ifdef DEBUG
-							if (client_table[i].id == pckt_cli.id)
-							{
-								cli_cell = i;
-								client_table[cli_cell].pckt_cli = pckt_cli;
-							}
-						#else
-							if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-							{
-								cli_cell = i;
-								client_table[cli_cell].pckt_cli = pckt_cli;
-							}
-						#endif
+						if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+						{
+							cli_cell = i;
+							client_table[cli_cell].pckt_cli = pckt_cli;
+						}
 						i++;
 					} while (cli_cell == -1 && i < MAX_CLIENTS);
 					

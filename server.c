@@ -446,7 +446,9 @@ int main(int argc, char *argv[])
 		
 	while (1) 
 	{
+		//printf("reading client packets\n");
 		// WAIT FOR PACKETS
+		memset(&pckt_cli, 0, sizeof(packet));
 		n = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR on recvfrom\n");
@@ -456,7 +458,7 @@ int main(int argc, char *argv[])
 			switch (pckt_cli.type)
 			{
 				case DISC:
-					debug_print("Found a discovery!\n");
+					printf("Found a discovery!\n");
 					// ADD CLIENT TO CLIENT TABLE
 					int client_already_exists = -1;
 					int empty_slot = -1;
@@ -491,7 +493,7 @@ int main(int argc, char *argv[])
 					break;
 				case REQ:
 					// FIND CLIENT IN TABLE
-					debug_print("Found a REQ\n");
+					printf("Found a REQ\n");
 					int cli_cell = -1, i = 0;
 					do
 					{
@@ -514,6 +516,7 @@ int main(int argc, char *argv[])
 					// CREATE THREAD TO HANDLE REQUEST
 					if (cli_cell != -1)
 					{
+						printf("client index is: %d\n", cli_cell);
 						pthread_t id;
 						int* cli_cell_ptr = malloc(sizeof(int));
 						*cli_cell_ptr = cli_cell;

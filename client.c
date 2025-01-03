@@ -191,7 +191,7 @@ int main(int argc, char *argv[])
     		pckt_req.id = id;
 		#endif
 
-		debug_print("Sending packet\n");
+		printf("Sending packet\n");
 
 		sendto(sockfd, &pckt_req, sizeof(packet), 0, (struct sockaddr *) &serv_addr, serv_addr_len);
 
@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
 			if (recvfrom(sockfd, &pckt_ack_req, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len) == -1)
 			{
 				if (errno != EAGAIN && errno != EWOULDBLOCK) // Some unexpected error happened.
-					handle_error("sendto failed");
+					handle_error("recv failed");
 				else // timeout
 				{
 					debug_print("timeout!\n");

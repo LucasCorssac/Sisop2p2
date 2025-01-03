@@ -115,6 +115,7 @@ int main(int argc, char *argv[])
 			handle_error("ERROR sendto\n");
 		
 		// WAIT FOR SERVER ACK
+		memset(&pckt_ack_disc, 0, sizeof(packet));
 		n = recvfrom(sockfd, &pckt_ack_disc, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 		{
@@ -199,6 +200,7 @@ int main(int argc, char *argv[])
 
 		do
 		{
+			memset(&pckt_ack_req, 0, sizeof(packet));
 			if (recvfrom(sockfd, &pckt_ack_req, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len) == -1)
 			{
 				if (errno != EAGAIN && errno != EWOULDBLOCK) // Some unexpected error happened.

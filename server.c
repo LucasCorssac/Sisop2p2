@@ -291,6 +291,7 @@ int main(int argc, char *argv[])
 
 		// WAIT FOR OTHER SERVERS
 		//printf("waiting reply\n");
+		memset(&pckt_serv_rply, 0, sizeof(packet));
 		n = recvfrom(sockfd, &pckt_serv_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
@@ -372,6 +373,7 @@ int main(int argc, char *argv[])
 		if (n < 0)
 			handle_error("ERROR sendto\n");
 
+		memset(&pckt_psync_rply, 0, sizeof(packet));
 		n = recvfrom(sockfd, &pckt_psync_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
@@ -410,6 +412,7 @@ int main(int argc, char *argv[])
 					if (n < 0)
 						handle_error("ERROR sendto\n");
 
+					memset(&pckt_am_leader_ack, 0, sizeof(packet));
 					n = recvfrom(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 					if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 						handle_error("ERROR recvfrom\n");

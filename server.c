@@ -37,7 +37,8 @@ enum SERVER_STATE {
     LEADER,
 	REPLICA,
 	SYNCING,
-	ELECTING
+	ELECTING,
+	REPLICA_SYNC
 };
 
 
@@ -404,7 +405,6 @@ int main(int argc, char *argv[])
 			{
 				packet pckt_am_leader, pckt_am_leader_ack;
 				pckt_am_leader.type = I_AM_LEADER;
-				printf("i: %d\n",i);
 				pckt_am_leader.serv_addr = server_list[i].serv_addr;
 				do
 				{
@@ -429,19 +429,8 @@ int main(int argc, char *argv[])
 //am_leader_late:
 		printf ("GOT AN I AM LEADER MESSAGE!\n");
 		my_addr = pckt_psync_rply.serv_addr;
-		server_state = REPLICA;
-
-		packet pckt_am_leader_ack;
-		pckt_am_leader_ack.type = AM_LEADER_ACK;
-		do
-		{
-			n = sendto(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
-			if (n < 0)
-				handle_error("ERROR sendto\n");
-			sleep(2);
-		}while(1);
+		server_state = REPLICA_SYNC;
 	}
-
 	printf("End of synchronization\n");
 	
 	// PRINT INITIALIZATION MESSSAGE
@@ -530,6 +519,17 @@ int main(int argc, char *argv[])
 				break;
 			} 		
 		}
+
+		else if (server_state == REPLICA_SYNC)
+		{
+			packet pckt_am_leader_ack;
+			pckt_am_leader_ack.type = AM_LEADER_ACK;
+			n = sendto(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+			if (n < 0)
+				handle_error("ERROR sendto\n");
+		}
+	
+	
 	}
 
 	// DESTROY MUTEXES 

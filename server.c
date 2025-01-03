@@ -34,10 +34,10 @@
 void * process_request(void *arg);
 
 enum SERVER_STATE {
-    MASTER,
+    LEADER,
 	REPLICA,
-	WAITING,
-	ELECTION
+	SYNCING,
+	ELECTING
 };
 
 
@@ -167,7 +167,7 @@ int main(int argc, char *argv[])
 {
 	debug_print("Debug flag was defined\n");
 
-	enum SERVER_STATE server_state = WAITING;
+	enum SERVER_STATE server_state = SYNCING;
 
 	int n;
 	socklen_t clilen = sizeof(struct sockaddr_in);
@@ -331,18 +331,28 @@ int main(int argc, char *argv[])
 					}
 				}
 			}
-		}		
+		}
+		else if (pckt_serv_rply.type == I_AM_LEADER)
+		{
+			goto am_leader_late;
+		}
+		else if (pckt_serv_rply.type == YOU_ARE_LEADER)
+		{
+			goto you_are_leader_late;
+		}
 	} while (found_alls < num_servers);
 
 	printf("ALL SERVERS FOUND \n");
 
 	// GET LEADER BASED ON IP
 	int leader_idx = 0;
+	struct sockaddr_in leader_addr;
 	for (int i = 0; i < num_servers; i++)
 	{
 		if (server_list[i].serv_addr.sin_addr.s_addr > server_list[leader_idx].serv_addr.sin_addr.s_addr)
 		{
 			leader_idx = i;
+			leader_addr = server_list[i].serv_addr;
 		}
 	}
 	printf("Leader is: %s\n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
@@ -354,28 +364,81 @@ int main(int argc, char *argv[])
 	pckt_post_sync.type = YOU_ARE_LEADER;
 	do
 	{
-		n = sendto(sockfd, &pckt_post_sync, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+		printf("Sending you are leader message!\n");
+		n = sendto(sockfd, &pckt_post_sync, sizeof(packet), 0, (struct sockaddr *) &leader_addr, serv_addr_len);
+		printf("n: %d", n);		
 		if (n < 0)
 			handle_error("ERROR sendto\n");
 
 		n = recvfrom(sockfd, &pckt_psync_rply, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
 		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR recvfrom\n");
+		
+		if (pckt_psync_rply.type == YOU_ARE_LEADER)
+		{
+			printf("got you are leader\n");
+		}
+		
+		sleep(2);
 	}
-	while(n < 0 || ((pckt_psync_rply.type != YOU_ARE_LEADER))); // SEGUIR PARA O PROCESSAMENTO
+	while(n < 0 || (pckt_psync_rply.type != YOU_ARE_LEADER) || (pckt_psync_rply.type != I_AM_LEADER)); // SEGUIR PARA O PROCESSAMENTO
 
 	// POTENTIALLY MOVE TO USE STATE MACHINE
 	
 	// WAIT FOR YOU ARE LEADER
 	if (pckt_psync_rply.type == YOU_ARE_LEADER)
 	{
-		//SET MY OWN ADDRESS
-		my_addr =  server_list[leader_idx].serv_addr;
+you_are_leader_late:
 
 		printf("GOT YOU ARE LEADER\n");
+
+		//SET MY OWN ADDRESS
+		my_addr =  server_list[leader_idx].serv_addr;
+		server_state = LEADER;
+
+		// SEND I AM LEADER
+		for(int i = 0; i < num_servers; i++)
+		{
+			if (i != leader_idx)
+			{
+				packet pckt_am_leader, pckt_am_leader_ack;
+				pckt_am_leader.type = I_AM_LEADER;
+				pckt_am_leader.serv_addr = server_list[i].serv_addr;
+				do
+				{
+					n = sendto(sockfd, &pckt_am_leader, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+					if (n < 0)
+						handle_error("ERROR sendto\n");
+
+					n = recvfrom(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &serv_addr, &serv_addr_len);
+					if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+						handle_error("ERROR recvfrom\n");
+					
+				} while (n < 0 || !(pckt_am_leader_ack.type == AM_LEADER_ACK && serv_addr.sin_addr.s_addr == server_list[i].serv_addr.sin_addr.s_addr));
+			}
+			printf("RECEIVED AM LEADER ACK FROM: %s\n", inet_ntoa(serv_addr.sin_addr));
+		}
 	}
 
-	printf("I was not leader\n");
+	// WAIT FOR I AM LEADER
+	else if (pckt_psync_rply.type == I_AM_LEADER)
+	{
+am_leader_late:
+		printf ("GOT I AM LEADER!\n");
+		my_addr = pckt_psync_rply.serv_addr;
+
+		packet pckt_am_leader_ack;
+		pckt_am_leader_ack.type = AM_LEADER_ACK;
+		do
+		{
+			n = sendto(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+			if (n < 0)
+				handle_error("ERROR sendto\n");
+			sleep(2);
+		}while(1);
+	}
+
+	printf("End of leader stuff\n");
 	
 	while(1){}
 	

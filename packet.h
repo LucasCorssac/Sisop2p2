@@ -8,7 +8,10 @@ typedef enum PACKET_TYPE {
     SERV_FOUND_ALL,
     YOU_ARE_LEADER,
     I_AM_LEADER,
-    AM_LEADER_ACK
+    AM_LEADER_ACK,
+    DISC_REP,
+    DISC_REP_ACK,
+    HEARTBEAT
 } packet_type;
 
 struct requisicao
@@ -32,6 +35,7 @@ typedef struct __packet
     union
     {
         struct sockaddr_in serv_addr;
+        struct sockaddr_in cli_addr;
         struct requisicao req;
         struct requisicao_ack ack;
     };

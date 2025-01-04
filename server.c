@@ -32,6 +32,7 @@
 #define MAX_REPLICAS 4
 
 void * process_request(void *arg);
+void * heartbeat_func(void *arg);
 
 enum SERVER_STATE {
     LEADER,
@@ -100,6 +101,13 @@ struct SERVER_CELL
 	int found_all;
 	int alive;
 	int leader;
+	int me;
+};
+
+struct HEARTBEAT_PARAMS
+{
+	struct SERVER_CELL* server_list_ptr;
+	int num_servers;
 };
 
 void print_timestamp()
@@ -262,6 +270,7 @@ int main(int argc, char *argv[])
 
 	pckt_serv_disc.type = SERV_DISC;
 
+	// INITIALIZE SERVER LIST
 	struct SERVER_CELL server_list[num_servers];
 	memset(server_list, 0, sizeof(server_list));
 
@@ -396,6 +405,7 @@ int main(int argc, char *argv[])
 
 		//SET MY OWN ADDRESS
 		my_addr =  server_list[leader_idx].serv_addr;
+		server_list[leader_idx].me = 1;
 		server_state = LEADER;
 
 		printf("sending I AM LEADER!\n");
@@ -431,13 +441,33 @@ int main(int argc, char *argv[])
 //am_leader_late:
 		printf ("GOT AN I AM LEADER MESSAGE!\n");
 		my_addr = pckt_psync_rply.serv_addr;
+		for (int i  = 0; i < num_servers; i++)
+		{
+			if (server_list[i].serv_addr.sin_addr.s_addr == my_addr.sin_addr.s_addr)
+			{
+				server_list[i].me = 1;
+			}
+		}
 		server_state = REPLICA_SYNC;
 	}
 	printf("End of synchronization\n");
+
+	for (int i  = 0; i < num_servers; i++)
+	{
+		if (server_list[i].me)
+		{
+			printf("MY ADDRESS: %s\n", inet_ntoa(server_list[i].serv_addr.sin_addr));
+		}
+	}
 	
 	// PRINT INITIALIZATION MESSSAGE
 	print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
-		
+	
+	/////////////////////////////////////////////////////////////////////////////////
+	/////////          MAIN LOOP
+	////////////////////////////////////////////////////////////////////////////////
+	int found_clients = 0;
+	int initialize_heartbeat_thread = 0;
 	while (1) 
 	{
 		//printf("reading client packets\n");
@@ -448,6 +478,20 @@ int main(int argc, char *argv[])
 			handle_error("ERROR on recvfrom\n");
 		if (server_state == LEADER)
 		{
+			// SEND HEARTBEAT
+			if (!initialize_heartbeat_thread)
+			{
+				pthread_t id;
+				struct HEARTBEAT_PARAMS* heartbeat_params_ptr = malloc(sizeof(struct HEARTBEAT_PARAMS));
+				heartbeat_params_ptr->num_servers = num_servers;
+				heartbeat_params_ptr->server_list_ptr = server_list;
+				n = pthread_create(&id, NULL, &heartbeat_func, heartbeat_params_ptr);
+				if (n != 0)
+					handle_error("Error creating thread\n");
+
+				initialize_heartbeat_thread = 1;
+			}
+			
 			// PROCESS PACKET
 			switch (pckt_cli.type)
 			{
@@ -467,11 +511,38 @@ int main(int argc, char *argv[])
 					}
 					if (client_already_exists == -1 && empty_slot != -1)
 					{
-						debug_print("sending DISC ACK\n");
-
 						client_table[empty_slot].empty = 0;
 						client_table[empty_slot].cli_addr = cli_addr;
 
+						printf("Replicating DISC\n");
+						for(int i = 0; i < num_servers; i++)
+						{
+							if (i != leader_idx && server_list[i].alive)
+							{
+								struct sockaddr_in serv_ack;
+								socklen_t serv_ack_len = sizeof(serv_ack);
+
+								packet pckt_disc_rep, pckt_disc_rep_ack;
+								pckt_disc_rep.type = DISC_REP;
+								pckt_disc_rep.cli_addr = cli_addr;
+								do
+								{
+									n = sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+									if (n < 0)
+										handle_error("ERROR sendto\n");
+
+									memset(&pckt_disc_rep_ack, 0, sizeof(packet));
+									n = recvfrom(sockfd, &pckt_disc_rep_ack, sizeof(packet), 0, (struct sockaddr *) &serv_ack, &serv_ack_len);
+									if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+										handle_error("ERROR recvfrom\n");
+									
+								} while (n < 0 || !(pckt_disc_rep_ack.type == DISC_REP_ACK && serv_ack.sin_addr.s_addr == server_list[i].serv_addr.sin_addr.s_addr));
+								
+								printf("RECEIVED DISC REP ACK FROM: %s\n", inet_ntoa(serv_ack.sin_addr));
+							}							
+						}
+
+						printf("Sending DISC ACK");
 						// SEND ACK
 						pckt_ack_disc.type = DISC_ACK;
 						n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
@@ -506,18 +577,34 @@ int main(int argc, char *argv[])
 					}
 				break;
 			} 		
+
 		}
 
 		else if (server_state == REPLICA_SYNC)
 		{
-			packet pckt_am_leader_ack;
-			pckt_am_leader_ack.type = AM_LEADER_ACK;
-			n = sendto(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
-			if (n < 0)
-				handle_error("ERROR sendto\n");
+			printf("I am in REPLICA SYNC STATE\n");
+			if (pckt_cli.type == HEARTBEAT)
+			{
+				printf("GOT A HEARTBEAT\n");
+				server_state = REPLICA;
+			}
+			else
+			{
+				packet pckt_am_leader_ack;
+				pckt_am_leader_ack.type = AM_LEADER_ACK;
+				n = sendto(sockfd, &pckt_am_leader_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+				if (n < 0)
+					handle_error("ERROR sendto\n");
+			}
 		}
-	
-	
+		else if (server_state == REPLICA)
+		{
+			printf("I am in REPLICA STATE\n");
+			if (pckt_cli.type == HEARTBEAT)
+			{
+				printf("GOT A HEARTBEAT\n");
+			}
+		}
 	}
 
 	// DESTROY MUTEXES 
@@ -530,6 +617,37 @@ int main(int argc, char *argv[])
 	close(sockfd);
 	return 0;
 }
+
+void* heartbeat_func(void *arg)
+{
+	pthread_detach(pthread_self());
+
+	struct HEARTBEAT_PARAMS params = *(struct HEARTBEAT_PARAMS*)arg;
+
+	int num_servers = params.num_servers;
+	struct SERVER_CELL *server_list = params.server_list_ptr;
+
+	free(arg);
+
+	int n = 0;
+
+	packet pckt_heartbeat;
+	pckt_heartbeat.type = HEARTBEAT;
+
+	while (1)
+	{
+		for(int i = 0; i < num_servers; i++)
+		{
+			if (!server_list[i].leader && server_list[i].alive)
+			{
+				n = sendto(sockfd, &pckt_heartbeat, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+				if (n < 0)
+					handle_error("Error sendto");
+			}
+		}
+	}
+}
+
 
 void* process_request(void *arg)
 {

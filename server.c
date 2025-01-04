@@ -35,11 +35,13 @@ void * process_request(void *arg);
 void * heartbeat_func(void *arg);
 
 enum SERVER_STATE {
-    LEADER,
-	REPLICA,
-	SYNCING,
-	ELECTING,
-	REPLICA_SYNC
+    ST_LEADER,
+	ST_REPLICA,
+	ST_SYNCING,
+	ST_ELECTING,
+	ST_REPLICA_SYNC,
+	ST_ELECT_WAITING,
+	ST_LEADER_INIT
 };
 
 
@@ -178,7 +180,7 @@ int main(int argc, char *argv[])
 {
 	debug_print("Debug flag was defined\n");
 
-	enum SERVER_STATE server_state = SYNCING;
+	enum SERVER_STATE server_state = ST_SYNCING;
 
 	int n;
 	socklen_t clilen = sizeof(struct sockaddr_in);
@@ -406,7 +408,7 @@ int main(int argc, char *argv[])
 		//SET MY OWN ADDRESS
 		my_addr =  server_list[leader_idx].serv_addr;
 		server_list[leader_idx].me = 1;
-		server_state = LEADER;
+		server_state = ST_LEADER;
 
 		printf("sending I AM LEADER!\n");
 
@@ -448,7 +450,7 @@ int main(int argc, char *argv[])
 				server_list[i].me = 1;
 			}
 		}
-		server_state = REPLICA_SYNC;
+		server_state = ST_REPLICA_SYNC;
 	}
 	printf("End of synchronization\n");
 
@@ -466,21 +468,28 @@ int main(int argc, char *argv[])
 	/////////////////////////////////////////////////////////////////////////////////
 	/////////          MAIN LOOP
 	////////////////////////////////////////////////////////////////////////////////
+	int recv_rtn = 0;
+
 	int found_clients = 0;
 	int initialize_heartbeat_thread = 0;
+	time_t time_last_heartbeat, time_election_start, time_elect_wait_start;
+	double elapsed_time;
+	int election_init = 0;
+	int election_wait_init = 0;
 	while (1) 
 	{
 		//printf("reading client packets\n");
 		// WAIT FOR PACKETS
 		memset(&pckt_cli, 0, sizeof(packet));
-		n = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
-		if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+		recv_rtn = recvfrom(sockfd, &pckt_cli, sizeof(packet), 0, (struct sockaddr *) &cli_addr, &clilen);
+		if (recv_rtn < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 			handle_error("ERROR on recvfrom\n");
-		if (server_state == LEADER)
+		if (server_state == ST_LEADER)
 		{
 			// SEND HEARTBEAT
 			if (!initialize_heartbeat_thread)
 			{
+				printf("Initializing heartbeat thread\n");
 				pthread_t id;
 				struct HEARTBEAT_PARAMS* heartbeat_params_ptr = malloc(sizeof(struct HEARTBEAT_PARAMS));
 				heartbeat_params_ptr->num_servers = num_servers;
@@ -579,14 +588,14 @@ int main(int argc, char *argv[])
 			} 		
 
 		}
-
-		else if (server_state == REPLICA_SYNC)
+		if (server_state == ST_REPLICA_SYNC)
 		{
 			printf("I am in REPLICA SYNC STATE\n");
 			if (pckt_cli.type == HEARTBEAT)
 			{
 				printf("GOT A HEARTBEAT\n");
-				server_state = REPLICA;
+				server_state = ST_REPLICA;
+				time(&time_last_heartbeat);
 			}
 			else
 			{
@@ -597,13 +606,95 @@ int main(int argc, char *argv[])
 					handle_error("ERROR sendto\n");
 			}
 		}
-		else if (server_state == REPLICA)
+		if (server_state == ST_REPLICA)
 		{
 			printf("I am in REPLICA STATE\n");
-			if (pckt_cli.type == HEARTBEAT)
+			if (recv_rtn > 0)
 			{
-				printf("GOT A HEARTBEAT\n");
+				if (pckt_cli.type == ELECTION)
+				{
+					server_state = ST_ELECTING;
+				}
+				else if (pckt_cli.type == HEARTBEAT)
+				{
+					printf("GOT A HEARTBEAT\n");
+					time(&time_last_heartbeat);
+				}
+			}			
+			elapsed_time = difftime(time(NULL), time_last_heartbeat);
+			if (elapsed_time > 5)
+			{
+				server_state = ST_ELECTING;
 			}
+		}
+		if (server_state == ST_ELECTING)
+		{
+			printf("I AM IN ELECTION STATE\n");
+
+			if (!election_init)
+			{
+				time(&time_election_start);
+				election_init = 1;				
+			}
+			if (recv_rtn > 0)
+			{
+				if (pckt_cli.type == HEARTBEAT)
+				{
+					// keep leader
+					election_init = 0;
+				}
+				else if (pckt_cli.type == ELECTION_WAIT)
+				{
+
+					election_init = 0;
+				}
+
+			}
+			if (difftime(time(NULL), time_election_start) > 5)
+			{
+				server_state = ST_LEADER_INIT;
+				election_init = 0;
+			}
+			
+			packet pckt_election;
+			for(int i = 0; i < num_servers; i++)
+			{
+				if (server_list[i].alive && 
+					server_list[i].serv_addr.sin_addr.s_addr > my_addr.sin_addr.s_addr)
+				{
+					pckt_election.type = ELECTION;
+					n = sendto(sockfd, &pckt_election, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+					if (n < 0)
+						handle_error("Error sendto");
+				}
+				if(server_list[i].alive && 
+				   server_list[i].serv_addr.sin_addr.s_addr < my_addr.sin_addr.s_addr)
+				   {
+						pckt_election.type = ELECTION_WAIT;
+						n = sendto(sockfd, &pckt_election, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+						if (n < 0)
+							handle_error("Error sendto");
+				   }
+			}	
+		}
+		if (server_state == ST_ELECT_WAITING)
+		{
+			printf("I AM IN STATE ELECT WAITING\n");
+			if (!election_wait_init)
+			{
+				time(&time_elect_wait_start);
+				election_wait_init = 1;
+			}
+
+			if (difftime(time(NULL), time_elect_wait_start) > 5)
+			{
+				server_state = ST_ELECTING;
+				election_init = 0;
+			} 
+		}
+		if (server_state == ST_LEADER_INIT)
+		{
+			printf("I AM IN STATE LEADER INIT\n");
 		}
 	}
 

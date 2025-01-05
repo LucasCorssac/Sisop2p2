@@ -36,6 +36,8 @@
 void * process_request(void *arg);
 void * heartbeat_func(void *arg);
 void * process_discovery(void *arg);
+void * replicate_discovery(void *arg);
+void * replicate_request(void *arg);
 
 enum SERVER_STATE {
     ST_LEADER,
@@ -801,8 +803,101 @@ void* process_discovery(void *arg)
 		handle_error("ERROR on sendto");	
 }
 
+void* replicate_discovery(void *arg)
+{
+	pthread_detach(pthread_self());
+
+	struct sockaddr_in cli_addr = *(struct sockaddr_in*)arg;
+	free(arg);
+
+	pthread_mutex_lock(&disc_lock);
+	int cli_idx = -1;
+	for (int i = 0; i < found_clients; i++)
+	{
+		if(client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+			cli_idx = i;
+	}
+	if (cli_idx == -1)
+	{
+		// client not found
+		client_table[found_clients].cli_addr = cli_addr;
+		found_clients++;
+	}
+	pthread_mutex_unlock(&disc_lock);
+
+	printf("Sending DISC ACK\n");
+	// SEND ACK
+	int n;
+	packet pckt_ack_disc;
+	pckt_ack_disc.type = DISC_ACK;
+	n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+	if (n  < 0)
+		handle_error("ERROR on sendto");	
+}
+
+
 
 void* process_request(void *arg)
+{
+	pthread_detach(pthread_self());		
+
+	int cli_index = *(int*)arg;
+	free(arg);
+	
+	pthread_mutex_lock(&client_table[cli_index].cli_lock);
+
+	packet pckt_ack_req, pckt_cli;
+	pckt_cli = client_table[cli_index].pckt_cli;
+
+	struct sockaddr_in cli_addr =  client_table[cli_index].cli_addr;
+	
+	if (client_table[cli_index].last_seqn ==
+		pckt_cli.req.seqn -1)
+	{
+		// UPDATE SHARED VALUES
+		pthread_mutex_lock(&shared_lock);
+			shared_values.total_reqs++;
+			shared_values.total_sum  += pckt_cli.req.value;
+			client_table[cli_index].last_num_reqs = shared_values.total_reqs;
+			client_table[cli_index].last_total_sum = shared_values.total_sum;
+		pthread_mutex_unlock(&shared_lock);
+
+		// UPDATE CLIENT TABLE
+		client_table[cli_index].last_seqn++;
+		client_table[cli_index].last_value = pckt_cli.req.value;
+		
+		print_timestamp(); printf("client %s id_req %lld value %lld num_reqs %lld total_sum %lld\n",
+								inet_ntoa(cli_addr.sin_addr),
+								pckt_cli.req.seqn,
+								pckt_cli.req.value,
+								client_table[cli_index].last_num_reqs,
+								client_table[cli_index].last_total_sum
+								);
+	}
+	else
+	{
+		print_timestamp(); printf("client %s DUP!! id_req %lld value %lld num_reqs %lld total_sum %lld\n",
+	 						   inet_ntoa(cli_addr.sin_addr),
+							   pckt_cli.req.seqn,
+							   pckt_cli.req.value,
+							   client_table[cli_index].last_num_reqs,
+							   client_table[cli_index].last_total_sum
+							   );
+	}
+
+		pckt_ack_req.type = REQ_ACK;
+		pckt_ack_req.ack.value = client_table[cli_index].last_value;
+		pckt_ack_req.ack.seqn =  client_table[cli_index].last_seqn;
+		pckt_ack_req.ack.num_reqs = client_table[cli_index].last_num_reqs;
+		pckt_ack_req.ack.total_sum = client_table[cli_index].last_total_sum;
+
+		// SEND ACK
+		sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+
+		pthread_mutex_unlock(&client_table[cli_index].cli_lock);
+}
+
+void* replicate_request(void *arg)
 {
 	pthread_detach(pthread_self());		
 

@@ -32,6 +32,7 @@
 #define MAX_REPLICAS 4
 
 #define WAIT_TIME 6
+#define AMALIVE_TIME 1
 
 void * process_request(void *arg);
 void * heartbeat_func(void *arg);
@@ -107,6 +108,8 @@ struct SERVER_CELL
 	int alive;
 	int leader;
 	int me;
+	time_t time_last_alive;
+	int processing_client[MAX_CLIENTS];
 };
 
 struct HEARTBEAT_PARAMS
@@ -536,7 +539,19 @@ int main(int argc, char *argv[])
 					}
 				break;
 			} 		
-
+			
+			for (int i = 0; i < num_servers; i++)
+			{
+				if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+				{
+					time(&server_list[i].time_last_alive);
+				}
+				else if (server_list[i].alive && !server_list[i].me && (difftime(time(NULL), server_list[i].time_last_alive) > WAIT_TIME))
+				{
+					server_list[i].alive = 0;
+					printf("Server %s is now dead\n", inet_ntoa(server_list[i].serv_addr.sin_addr));
+				}	
+			}
 		}
 		if (server_state == ST_REPLICA_SYNC)
 		{
@@ -563,10 +578,12 @@ int main(int argc, char *argv[])
 		}
 		if (server_state == ST_REPLICA)
 		{
+			time_t time_to_send_amalive;
 			if (!st_replica_init)
 			{
 				printf("I am in REPLICA STATE\n");
 				st_replica_init = 1;
+				time(&time_to_send_amalive);
 			}
 			if (recv_rtn > 0)
 			{
@@ -600,6 +617,16 @@ int main(int argc, char *argv[])
 			{
 				server_state = ST_ELECTING;
 				st_replica_init = 0;
+			}
+			if (difftime(time(NULL), time_to_send_amalive) > AMALIVE_TIME)
+			{
+				packet pckt_amalive;
+				pckt_amalive.type = AMALIVE;
+				n = sendto(sockfd, &pckt_amalive, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+				if (n < 0)
+					handle_error("ERROR sendto\n");
+
+				time(&time_to_send_amalive);
 			}
 		}
 		if (server_state == ST_ELECTING)
@@ -721,6 +748,12 @@ int main(int argc, char *argv[])
 			n = pthread_create(&id, NULL, &heartbeat_func, heartbeat_params_ptr);
 			if (n != 0)
 				handle_error("Error creating thread\n");
+
+			for(int i = 0; i < num_servers; i++)
+			{
+				if (server_list[i].alive)
+					time(&server_list[i].time_last_alive);
+			}
 
 			// PRINT INITIALIZATION MESSSAGE
 			print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);

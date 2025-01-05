@@ -13,7 +13,8 @@ typedef enum PACKET_TYPE {
     DISC_REP_ACK,
     HEARTBEAT,
     ELECTION,
-    ELECTION_WAIT
+    ELECTION_WAIT,
+    AMALIVE
 } packet_type;
 
 struct requisicao

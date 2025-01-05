@@ -297,8 +297,14 @@ int main(int argc, char *argv[])
 	do
 	{
 		if (found_servers >= num_servers)
-			pckt_serv_disc.type = SERV_FOUND_ALL;
-		
+		{
+			packet pckt_found_all;
+			pckt_found_all.type = SERV_FOUND_ALL;
+			n = sendto(sockfd, &pckt_found_all, sizeof(packet), 0, (struct sockaddr *) &brdcst_addr, sizeof(brdcst_addr));
+			if (n < 0)
+				handle_error("ERROR sendto\n");
+		}
+
 		//printf("sending message\n");
 		n = sendto(sockfd, &pckt_serv_disc, sizeof(packet), 0, (struct sockaddr *) &brdcst_addr, sizeof(brdcst_addr));
 		if (n < 0)

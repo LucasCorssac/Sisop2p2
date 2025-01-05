@@ -665,31 +665,34 @@ int main(int argc, char *argv[])
 				}
 
 			}
-			if (difftime(time(NULL), time_election_start) > 5)
+			if(server_state == ST_ELECTING)
 			{
-				server_state = ST_LEADER_INIT;
-				election_init = 0;
-			}
-			
-			packet pckt_election;
-			for(int i = 0; i < num_servers; i++)
-			{
-				if (server_list[i].alive && 
-					server_list[i].serv_addr.sin_addr.s_addr > my_addr.sin_addr.s_addr)
+				if (difftime(time(NULL), time_election_start) > 5)
 				{
-					pckt_election.type = ELECTION;
-					n = sendto(sockfd, &pckt_election, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
-					if (n < 0)
-						handle_error("Error sendto");
+					server_state = ST_LEADER_INIT;
+					election_init = 0;
 				}
-				if(server_list[i].alive && 
-				   server_list[i].serv_addr.sin_addr.s_addr < my_addr.sin_addr.s_addr)
-				   {
-						pckt_election.type = ELECTION_WAIT;
+				
+				packet pckt_election;
+				for(int i = 0; i < num_servers; i++)
+				{
+					if (server_list[i].alive && 
+						server_list[i].serv_addr.sin_addr.s_addr > my_addr.sin_addr.s_addr)
+					{
+						pckt_election.type = ELECTION;
 						n = sendto(sockfd, &pckt_election, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
 						if (n < 0)
 							handle_error("Error sendto");
-				   }
+					}
+					if(server_list[i].alive && 
+					server_list[i].serv_addr.sin_addr.s_addr < my_addr.sin_addr.s_addr)
+					{
+							pckt_election.type = ELECTION_WAIT;
+							n = sendto(sockfd, &pckt_election, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
+							if (n < 0)
+								handle_error("Error sendto");
+					}
+				}
 			}	
 		}
 		if (server_state == ST_ELECT_WAITING)
@@ -721,11 +724,14 @@ int main(int argc, char *argv[])
 				election_wait_init = 0;
 				time(&time_last_heartbeat);
 			}
-			if (difftime(time(NULL), time_elect_wait_start) > 5)
+			if (server_state == ST_ELECT_WAITING)
 			{
-				server_state = ST_ELECTING;
-				election_wait_init = 0;
-			} 
+				if (difftime(time(NULL), time_elect_wait_start) > 5)
+				{
+					server_state = ST_ELECTING;
+					election_wait_init = 0;
+				} 
+			}
 		}
 		if (server_state == ST_LEADER_INIT)
 		{
@@ -745,7 +751,6 @@ int main(int argc, char *argv[])
 			print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
 			
 			server_state = ST_LEADER;
-			
 		}
 	}
 

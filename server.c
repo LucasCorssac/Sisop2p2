@@ -600,7 +600,8 @@ int main(int argc, char *argv[])
 				else if (pckt_cli.type == HEARTBEAT)
 				{
 					printf("GOT A HEARTBEAT\n");
-
+					printf("Leader is: %s\n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
+					printf("Got hearbeat from: %s\n", inet_ntoa(cli_addr.sin_addr));
 					// check leader
 					if (server_list[leader_idx].serv_addr.sin_addr.s_addr != cli_addr.sin_addr.s_addr)
 					{

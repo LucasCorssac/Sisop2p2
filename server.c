@@ -408,7 +408,7 @@ int main(int argc, char *argv[])
 		//SET MY OWN ADDRESS
 		my_addr =  server_list[leader_idx].serv_addr;
 		server_list[leader_idx].me = 1;
-		server_state = ST_LEADER;
+		server_state = ST_LEADER_INIT;
 
 		printf("sending I AM LEADER!\n");
 
@@ -462,9 +462,6 @@ int main(int argc, char *argv[])
 		}
 	}
 	
-	// PRINT INITIALIZATION MESSSAGE
-	print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
-	
 	/////////////////////////////////////////////////////////////////////////////////
 	/////////          MAIN LOOP
 	////////////////////////////////////////////////////////////////////////////////
@@ -486,21 +483,6 @@ int main(int argc, char *argv[])
 			handle_error("ERROR on recvfrom\n");
 		if (server_state == ST_LEADER)
 		{
-			// SEND HEARTBEAT
-			if (!initialize_heartbeat_thread)
-			{
-				printf("Initializing heartbeat thread\n");
-				pthread_t id;
-				struct HEARTBEAT_PARAMS* heartbeat_params_ptr = malloc(sizeof(struct HEARTBEAT_PARAMS));
-				heartbeat_params_ptr->num_servers = num_servers;
-				heartbeat_params_ptr->server_list_ptr = server_list;
-				n = pthread_create(&id, NULL, &heartbeat_func, heartbeat_params_ptr);
-				if (n != 0)
-					handle_error("Error creating thread\n");
-
-				initialize_heartbeat_thread = 1;
-			}
-			
 			// PROCESS PACKET
 			switch (pckt_cli.type)
 			{
@@ -618,6 +600,23 @@ int main(int argc, char *argv[])
 				else if (pckt_cli.type == HEARTBEAT)
 				{
 					printf("GOT A HEARTBEAT\n");
+
+					// check leader
+					if (server_list[leader_idx].serv_addr.sin_addr.s_addr != cli_addr.sin_addr.s_addr)
+					{
+						server_list[leader_idx].alive = 0;
+						server_list[leader_idx].leader = 0;
+						for(int i = 0; i < num_servers; i++)
+						{
+							if(server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							{
+								leader_idx = i;
+								server_list[i].leader = 1;
+							}
+						}
+
+					}
+
 					time(&time_last_heartbeat);
 				}
 			}			
@@ -640,12 +639,28 @@ int main(int argc, char *argv[])
 			{
 				if (pckt_cli.type == HEARTBEAT)
 				{
-					// keep leader
+					// check leader
+					if (server_list[leader_idx].serv_addr.sin_addr.s_addr != cli_addr.sin_addr.s_addr)
+					{
+						server_list[leader_idx].alive = 0;
+						server_list[leader_idx].leader = 0;
+						for(int i = 0; i < num_servers; i++)
+						{
+							if(server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							{
+								leader_idx = i;
+								server_list[i].leader = 1;
+							}
+						}
+
+					}					
+					server_state = ST_REPLICA;
 					election_init = 0;
+					time(&time_last_heartbeat);
 				}
 				else if (pckt_cli.type == ELECTION_WAIT)
 				{
-
+					server_state = ST_ELECT_WAITING;
 					election_init = 0;
 				}
 
@@ -685,16 +700,52 @@ int main(int argc, char *argv[])
 				time(&time_elect_wait_start);
 				election_wait_init = 1;
 			}
+			if (pckt_cli.type == HEARTBEAT)
+			{
+				// check leader
+				if (server_list[leader_idx].serv_addr.sin_addr.s_addr != cli_addr.sin_addr.s_addr)
+				{
+					server_list[leader_idx].alive = 0;
+					server_list[leader_idx].leader = 0;
+					for(int i = 0; i < num_servers; i++)
+					{
+						if(server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+						{
+							leader_idx = i;
+							server_list[i].leader = 1;
+						}
+					}
 
+				}
+				server_state = ST_REPLICA;
+				election_wait_init = 0;
+				time(&time_last_heartbeat);
+			}
 			if (difftime(time(NULL), time_elect_wait_start) > 5)
 			{
 				server_state = ST_ELECTING;
-				election_init = 0;
+				election_wait_init = 0;
 			} 
 		}
 		if (server_state == ST_LEADER_INIT)
 		{
 			printf("I AM IN STATE LEADER INIT\n");
+
+			// CREATE HEARBEAT THREAD			
+			printf("Initializing heartbeat thread\n");
+			pthread_t id;
+			struct HEARTBEAT_PARAMS* heartbeat_params_ptr = malloc(sizeof(struct HEARTBEAT_PARAMS));
+			heartbeat_params_ptr->num_servers = num_servers;
+			heartbeat_params_ptr->server_list_ptr = server_list;
+			n = pthread_create(&id, NULL, &heartbeat_func, heartbeat_params_ptr);
+			if (n != 0)
+				handle_error("Error creating thread\n");
+
+			// PRINT INITIALIZATION MESSSAGE
+			print_timestamp(); printf("num_reqs %lld total_sum %lld\n",shared_values.total_reqs, shared_values.total_sum);
+			
+			server_state = ST_LEADER;
+			
 		}
 	}
 

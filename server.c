@@ -465,6 +465,8 @@ int main(int argc, char *argv[])
 	/////////////////////////////////////////////////////////////////////////////////
 	/////////          MAIN LOOP
 	////////////////////////////////////////////////////////////////////////////////
+	int WAIT_TIME = 6;
+
 	int recv_rtn = 0;
 
 	int found_clients = 0;
@@ -622,7 +624,7 @@ int main(int argc, char *argv[])
 				}
 			}			
 			elapsed_time = difftime(time(NULL), time_last_heartbeat);
-			if (elapsed_time > 5)
+			if (elapsed_time > WAIT_TIME)
 			{
 				server_state = ST_ELECTING;
 			}
@@ -668,7 +670,7 @@ int main(int argc, char *argv[])
 			}
 			if(server_state == ST_ELECTING)
 			{
-				if (difftime(time(NULL), time_election_start) > 5)
+				if (difftime(time(NULL), time_election_start) > WAIT_TIME)
 				{
 					server_state = ST_LEADER_INIT;
 					election_init = 0;
@@ -727,7 +729,7 @@ int main(int argc, char *argv[])
 			}
 			if (server_state == ST_ELECT_WAITING)
 			{
-				if (difftime(time(NULL), time_elect_wait_start) > 5)
+				if (difftime(time(NULL), time_elect_wait_start) > WAIT_TIME)
 				{
 					server_state = ST_ELECTING;
 					election_wait_init = 0;

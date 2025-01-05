@@ -31,6 +31,8 @@
 #define MAX_CLIENTS 10
 #define MAX_REPLICAS 4
 
+#define WAIT_TIME 6
+
 void * process_request(void *arg);
 void * heartbeat_func(void *arg);
 void * process_discovery(void *arg);
@@ -473,16 +475,16 @@ int main(int argc, char *argv[])
 	/////////////////////////////////////////////////////////////////////////////////
 	/////////          MAIN LOOP
 	////////////////////////////////////////////////////////////////////////////////
-	int WAIT_TIME = 6;
-
 	int recv_rtn = 0;
 
 	found_clients = 0;
 	int initialize_heartbeat_thread = 0;
 	time_t time_last_heartbeat, time_election_start, time_elect_wait_start;
 	double elapsed_time;
-	int election_init = 0;
-	int election_wait_init = 0;
+	int st_election_init = 0;
+	int st_election_wait_init = 0;
+	int st_replica_init = 0;
+	int st_replica_sync_init = 0;
 	while (1) 
 	{
 		//printf("reading client packets\n");
@@ -536,11 +538,16 @@ int main(int argc, char *argv[])
 		}
 		if (server_state == ST_REPLICA_SYNC)
 		{
-			printf("I am in REPLICA SYNC STATE\n");
+			if (!st_replica_sync_init)
+			{
+				printf("I am in REPLICA SYNC STATE\n");
+				st_replica_sync_init = 1;
+			}
 			if (pckt_cli.type == HEARTBEAT)
 			{
 				printf("GOT A HEARTBEAT\n");
 				server_state = ST_REPLICA;
+				st_replica_sync_init = 0;
 				time(&time_last_heartbeat);
 			}
 			else
@@ -554,18 +561,20 @@ int main(int argc, char *argv[])
 		}
 		if (server_state == ST_REPLICA)
 		{
-			printf("I am in REPLICA STATE\n");
+			if (!st_replica_init)
+			{
+				printf("I am in REPLICA STATE\n");
+				st_replica_init = 1;
+			}
 			if (recv_rtn > 0)
 			{
 				if (pckt_cli.type == ELECTION)
 				{
 					server_state = ST_ELECTING;
+					st_replica_init = 0;
 				}
 				else if (pckt_cli.type == HEARTBEAT)
 				{
-					printf("GOT A HEARTBEAT\n");
-					printf("Leader is: %s\n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
-					printf("Got hearbeat from: %s\n", inet_ntoa(cli_addr.sin_addr));
 					// check leader
 					if (server_list[leader_idx].serv_addr.sin_addr.s_addr != cli_addr.sin_addr.s_addr)
 					{
@@ -579,9 +588,8 @@ int main(int argc, char *argv[])
 								server_list[i].leader = 1;
 							}
 						}
-
+						printf("Leader is now: %s \n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 					}
-
 					time(&time_last_heartbeat);
 				}
 			}			
@@ -589,16 +597,16 @@ int main(int argc, char *argv[])
 			if (elapsed_time > WAIT_TIME)
 			{
 				server_state = ST_ELECTING;
+				st_replica_init = 0;
 			}
 		}
 		if (server_state == ST_ELECTING)
 		{
-			printf("I AM IN ELECTION STATE\n");
-
-			if (!election_init)
+			if (!st_election_init)
 			{
+				printf("ENTERING ELECTION STATE\n");
 				time(&time_election_start);
-				election_init = 1;				
+				st_election_init = 1;				
 			}
 			if (recv_rtn > 0)
 			{
@@ -617,16 +625,16 @@ int main(int argc, char *argv[])
 								server_list[i].leader = 1;
 							}
 						}
-
-					}					
+					}
+					printf("Leader is now: %s \n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 					server_state = ST_REPLICA;
-					election_init = 0;
+					st_election_init = 0;
 					time(&time_last_heartbeat);
 				}
 				else if (pckt_cli.type == ELECTION_WAIT)
 				{
 					server_state = ST_ELECT_WAITING;
-					election_init = 0;
+					st_election_init = 0;
 				}
 
 			}
@@ -635,7 +643,7 @@ int main(int argc, char *argv[])
 				if (difftime(time(NULL), time_election_start) > WAIT_TIME)
 				{
 					server_state = ST_LEADER_INIT;
-					election_init = 0;
+					st_election_init = 0;
 				}
 				
 				packet pckt_election;
@@ -662,11 +670,11 @@ int main(int argc, char *argv[])
 		}
 		if (server_state == ST_ELECT_WAITING)
 		{
-			printf("I AM IN STATE ELECT WAITING\n");
-			if (!election_wait_init)
+			if (!st_election_wait_init)
 			{
+				printf("ENTERING STATE ELECTION WAITING\n");
 				time(&time_elect_wait_start);
-				election_wait_init = 1;
+				st_election_wait_init = 1;
 			}
 			if (pckt_cli.type == HEARTBEAT)
 			{
@@ -683,10 +691,10 @@ int main(int argc, char *argv[])
 							server_list[i].leader = 1;
 						}
 					}
-
 				}
+				printf("Leader is now: %s \n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 				server_state = ST_REPLICA;
-				election_wait_init = 0;
+				st_election_wait_init = 0;
 				time(&time_last_heartbeat);
 			}
 			if (server_state == ST_ELECT_WAITING)
@@ -694,7 +702,7 @@ int main(int argc, char *argv[])
 				if (difftime(time(NULL), time_elect_wait_start) > WAIT_TIME)
 				{
 					server_state = ST_ELECTING;
-					election_wait_init = 0;
+					st_election_wait_init = 0;
 				} 
 			}
 		}

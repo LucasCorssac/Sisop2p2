@@ -67,8 +67,6 @@ typedef struct REPLICA_TABLE_CELL
 
 typedef struct CLIENT_TABLE_CELL
 {
-	int empty;
-	
 	#ifdef DEBUG
     	int id;
 	#endif
@@ -213,7 +211,6 @@ int main(int argc, char *argv[])
 	// INITIALIZE CLIENT TABLE
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
-		client_table[i].empty = 1;
 		client_table[i].last_seqn = 0;
 		n = pthread_mutex_init (&client_table[i].cli_lock, NULL);
 		if (n != 0)
@@ -491,56 +488,25 @@ int main(int argc, char *argv[])
 				case DISC:
 					printf("Found a discovery!\n");
 					// ADD CLIENT TO CLIENT TABLE
-					int client_already_exists = -1;
-					int empty_slot = -1;
-					for(int i = 0; i < MAX_CLIENTS; i++)
+					int cli_idx = -1;
+					for (int i = 0; i < found_clients; i++)
 					{
-						if(!client_table[i].empty &&
-							client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-							client_already_exists = i;
-						
-						if(empty_slot == -1 && client_table[i].empty)
-							empty_slot = i;
+						if(client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							cli_idx = i;
 					}
-					if (client_already_exists == -1 && empty_slot != -1)
+					if (cli_idx == -1)
 					{
-						client_table[empty_slot].empty = 0;
-						client_table[empty_slot].cli_addr = cli_addr;
-
-						printf("Replicating DISC\n");
-						for(int i = 0; i < num_servers; i++)
-						{
-							if (i != leader_idx && server_list[i].alive)
-							{
-								struct sockaddr_in serv_ack;
-								socklen_t serv_ack_len = sizeof(serv_ack);
-
-								packet pckt_disc_rep, pckt_disc_rep_ack;
-								pckt_disc_rep.type = DISC_REP;
-								pckt_disc_rep.cli_addr = cli_addr;
-								do
-								{
-									n = sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, (struct sockaddr *) &server_list[i].serv_addr, sizeof(struct sockaddr_in));
-									if (n < 0)
-										handle_error("ERROR sendto\n");
-
-									memset(&pckt_disc_rep_ack, 0, sizeof(packet));
-									n = recvfrom(sockfd, &pckt_disc_rep_ack, sizeof(packet), 0, (struct sockaddr *) &serv_ack, &serv_ack_len);
-									if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
-										handle_error("ERROR recvfrom\n");
-									
-								} while (n < 0 || !(pckt_disc_rep_ack.type == DISC_REP_ACK && serv_ack.sin_addr.s_addr == server_list[i].serv_addr.sin_addr.s_addr));
-								
-								printf("RECEIVED DISC REP ACK FROM: %s\n", inet_ntoa(serv_ack.sin_addr));
-							}							
-						}
+						// client not found
+						client_table[found_clients].cli_addr = cli_addr;
+						found_clients++;
 
 						printf("Sending DISC ACK");
 						// SEND ACK
 						pckt_ack_disc.type = DISC_ACK;
 						n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
 						if (n  < 0)
-							handle_error("ERROR on sendto");					
+							handle_error("ERROR on sendto");
+
 					}
 					break;
 				case REQ:

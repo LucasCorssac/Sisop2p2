@@ -33,6 +33,7 @@
 
 void * process_request(void *arg);
 void * heartbeat_func(void *arg);
+void * process_discovery(void *arg);
 
 enum SERVER_STATE {
     ST_LEADER,
@@ -93,7 +94,7 @@ struct SHARED_VALUES shared_values;
 
 client_table_cell client_table[MAX_CLIENTS];
 
-pthread_mutex_t shared_lock;
+pthread_mutex_t shared_lock, disc_lock;
 
 struct SERVER_CELL
 {
@@ -119,6 +120,7 @@ void print_timestamp()
 }
 
 int sockfd;
+int found_clients;
 
 // Function to get the server's IP address
 void get_server_ip(char *ip_buffer, size_t buffer_size) {
@@ -207,6 +209,9 @@ int main(int argc, char *argv[])
     if (n != 0)
         handle_error_en(n, "pthread_mutex_init error");
     
+	n = pthread_mutex_init(&disc_lock, NULL);
+    if (n != 0)
+        handle_error_en(n, "pthread_mutex_init error");
 
 	// INITIALIZE CLIENT TABLE
 	for(int i = 0; i < MAX_CLIENTS; i++)
@@ -466,7 +471,7 @@ int main(int argc, char *argv[])
 
 	int recv_rtn = 0;
 
-	int found_clients = 0;
+	found_clients = 0;
 	int initialize_heartbeat_thread = 0;
 	time_t time_last_heartbeat, time_election_start, time_elect_wait_start;
 	double elapsed_time;
@@ -487,27 +492,12 @@ int main(int argc, char *argv[])
 			{
 				case DISC:
 					printf("Found a discovery!\n");
-					// ADD CLIENT TO CLIENT TABLE
-					int cli_idx = -1;
-					for (int i = 0; i < found_clients; i++)
-					{
-						if(client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-							cli_idx = i;
-					}
-					if (cli_idx == -1)
-					{
-						// client not found
-						client_table[found_clients].cli_addr = cli_addr;
-						found_clients++;
-
-						printf("Sending DISC ACK");
-						// SEND ACK
-						pckt_ack_disc.type = DISC_ACK;
-						n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
-						if (n  < 0)
-							handle_error("ERROR on sendto");
-
-					}
+					pthread_t id;
+					struct sockaddr_in* cli_addr_ptr = malloc(sizeof(struct sockaddr_in));
+					*cli_addr_ptr = cli_addr;
+					n = pthread_create(&id, NULL, &process_discovery, cli_addr_ptr);
+					if (n != 0)
+						handle_error("Error creating thread\n");
 					break;
 				case REQ:
 					// FIND CLIENT IN TABLE
@@ -725,6 +715,7 @@ int main(int argc, char *argv[])
 
 	// DESTROY MUTEXES 
 	pthread_mutex_destroy(&shared_lock);
+	pthread_mutex_destroy(&disc_lock);
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		pthread_mutex_destroy(&client_table[i].cli_lock);
@@ -762,6 +753,38 @@ void* heartbeat_func(void *arg)
 			}
 		}
 	}
+}
+
+void* process_discovery(void *arg)
+{
+	pthread_detach(pthread_self());
+
+	struct sockaddr_in cli_addr = *(struct sockaddr_in*)arg;
+	free(arg);
+
+	pthread_mutex_lock(&disc_lock);
+	int cli_idx = -1;
+	for (int i = 0; i < found_clients; i++)
+	{
+		if(client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+			cli_idx = i;
+	}
+	if (cli_idx == -1)
+	{
+		// client not found
+		client_table[found_clients].cli_addr = cli_addr;
+		found_clients++;
+	}
+	pthread_mutex_unlock(&disc_lock);
+
+	printf("Sending DISC ACK\n");
+	// SEND ACK
+	int n;
+	packet pckt_ack_disc;
+	pckt_ack_disc.type = DISC_ACK;
+	n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+	if (n  < 0)
+		handle_error("ERROR on sendto");	
 }
 
 

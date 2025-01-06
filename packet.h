@@ -29,6 +29,11 @@ struct requisicao_ack
     long long num_reqs;
     long long total_sum;
 };
+struct disc_rep_data
+{
+    struct sockaddr_in cli_addr;
+    int cli_idx;
+};
 typedef struct __packet
 {
     #ifdef DEBUG
@@ -37,8 +42,8 @@ typedef struct __packet
     packet_type type;
     union
     {
+        struct disc_rep_data drep_dt;
         struct sockaddr_in serv_addr;
-        struct sockaddr_in cli_addr;
         struct requisicao req;
         struct requisicao_ack ack;
     };

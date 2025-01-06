@@ -51,31 +51,14 @@ enum SERVER_STATE {
 };
 
 
-typedef struct REPLICA_TABLE_CELL
-{
-	int empty;
-	
-	#ifdef DEBUG
-    	int id;
-	#endif
-	
-    struct sockaddr_in cli_addr;
-
-	long long last_seqn;
-    long long last_num_reqs;  
-    long long last_total_sum;
-	long long last_value; 
-
-	packet pckt_cli;
-
-	pthread_mutex_t cli_lock;
-} replica_table_cell;
-
 typedef struct CLIENT_TABLE_CELL
 {
 	#ifdef DEBUG
     	int id;
 	#endif
+
+	int disc_rep_acks;
+	int req_rep_acks;
 	
     struct sockaddr_in cli_addr;
 
@@ -101,6 +84,13 @@ client_table_cell client_table[MAX_CLIENTS];
 
 pthread_mutex_t shared_lock, disc_lock;
 
+struct REPLICA_CLIENT
+{
+	int found_client;
+	int total_reqs;
+	int total_sum;
+};
+
 struct SERVER_CELL
 {
 	struct sockaddr_in serv_addr;
@@ -109,7 +99,7 @@ struct SERVER_CELL
 	int leader;
 	int me;
 	time_t time_last_alive;
-	int processing_client[MAX_CLIENTS];
+	struct REPLICA_CLIENT replica_clients[MAX_CLIENTS];
 };
 
 struct HEARTBEAT_PARAMS
@@ -194,7 +184,7 @@ int main(int argc, char *argv[])
 	struct sockaddr_in brdcst_addr, my_addr, cli_addr, serv_addr;
 	int my_port;
 	
-	packet pckt_cli, pckt_ack_disc, pckt_ack_req;
+	packet pckt_cli, pckt_ack_req;
 	
 	// GET PORT NUMBER
 	if (argc < 2) {
@@ -221,6 +211,7 @@ int main(int argc, char *argv[])
         handle_error_en(n, "pthread_mutex_init error");
 
 	// INITIALIZE CLIENT TABLE
+	memset(client_table, 0, sizeof(client_table));
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		client_table[i].last_seqn = 0;
@@ -505,13 +496,71 @@ int main(int argc, char *argv[])
 			{
 				case DISC:
 					printf("Found a discovery!\n");
-					pthread_t id;
-					struct sockaddr_in* cli_addr_ptr = malloc(sizeof(struct sockaddr_in));
-					*cli_addr_ptr = cli_addr;
-					n = pthread_create(&id, NULL, &process_discovery, cli_addr_ptr);
-					if (n != 0)
-						handle_error("Error creating thread\n");
-					break;
+					int cli_idx = -1;
+					for (int i = 0; i < found_clients; i++)
+					{
+						if(client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+							cli_idx = i;
+					}
+					if (cli_idx == -1)
+					{
+						// client not found
+						client_table[found_clients].cli_addr = cli_addr;
+						cli_idx = found_clients;
+						found_clients++;						
+					}
+					// send disc reps
+					// must contain cli_addr and cli_idx
+					packet pckt_disc_rep;
+					pckt_disc_rep.type = DISC_REP;
+					pckt_disc_rep.drep_dt.cli_idx = cli_idx;
+					pckt_disc_rep.drep_dt.cli_addr = cli_addr;
+					for (int i = 0; i < num_servers; i++)
+					{
+						if(server_list[i].alive && !server_list[i].me)
+						{
+							printf ("Sending cli_idx %d info to %s", cli_idx, inet_ntoa(server_list[i].serv_addr.sin_addr));
+							sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, 
+								(struct sockaddr *) &server_list[i].serv_addr, 
+								sizeof(server_list[i].serv_addr));
+						}
+						
+					}
+				break;
+				case DISC_REP_ACK:
+					printf("Found a disc rep ack\n");
+					int serv_idx = -1;
+					int live_replicas = 0;
+					for (int i = 0; i < num_servers; i++)
+					{
+						if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+						{
+							serv_idx = i;
+						}
+						if (!server_list[i].me && server_list[i].alive)
+						{
+							live_replicas++;
+						}
+					}
+					if (serv_idx != -1)
+					{
+						// replica hadn't found the client
+						if (!server_list[serv_idx].replica_clients[pckt_cli.drep_dt.cli_idx].found_client)
+						{
+							client_table[pckt_cli.drep_dt.cli_idx].disc_rep_acks++;
+							server_list[serv_idx].replica_clients[pckt_cli.drep_dt.cli_idx].found_client = 1;
+						}
+						if (client_table[pckt_cli.drep_dt.cli_idx].disc_rep_acks == live_replicas)
+						{
+							// send disc ack
+							packet pckt_ack_disc;
+							pckt_ack_disc.type = DISC_ACK;
+							n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0, (struct sockaddr *) &pckt_cli.drep_dt.cli_addr, sizeof(pckt_cli.drep_dt.cli_addr));
+							if (n < 0)
+								handle_error("Error sendto");
+						}
+					}
+				break;
 				case REQ:
 					// FIND CLIENT IN TABLE
 					printf("Found a REQ\n");
@@ -610,6 +659,21 @@ int main(int argc, char *argv[])
 						printf("Leader is now: %s \n", inet_ntoa(server_list[leader_idx].serv_addr.sin_addr));
 					}
 					time(&time_last_heartbeat);
+				}
+				else if (pckt_cli.type == DISC_REP)
+				{
+					printf("got a disc rep!\n");
+					printf("cli index is: %d \n", pckt_cli.drep_dt.cli_idx);
+					found_clients++;
+					client_table[pckt_cli.drep_dt.cli_idx].cli_addr = pckt_cli.drep_dt.cli_addr;
+
+					packet pckt_disc_rep_ack;
+					pckt_disc_rep_ack.type = DISC_REP_ACK;
+					pckt_disc_rep_ack.drep_dt.cli_idx = pckt_cli.drep_dt.cli_idx;
+					pckt_disc_rep_ack.drep_dt.cli_addr = pckt_cli.drep_dt.cli_addr;
+					n = sendto(sockfd, &pckt_disc_rep_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+					if (n < 0)
+						handle_error("ERROR sendto\n");
 				}
 			}			
 			elapsed_time = difftime(time(NULL), time_last_heartbeat);
@@ -751,6 +815,16 @@ int main(int argc, char *argv[])
 
 			for(int i = 0; i < num_servers; i++)
 			{
+				if (server_list[i].leader && !server_list[i].me)
+				{
+					server_list[i].alive = 0;
+					server_list[i].leader = 0;
+				}
+				if (server_list[i].me)
+				{
+					leader_idx = i;
+					server_list[i].alive = 0;
+				}
 				if (server_list[i].alive)
 					time(&server_list[i].time_last_alive);
 			}

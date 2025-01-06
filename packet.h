@@ -11,6 +11,8 @@ typedef enum PACKET_TYPE {
     AM_LEADER_ACK,
     DISC_REP,
     DISC_REP_ACK,
+    REP_REQ,
+    REQ_REP_ACK,
     HEARTBEAT,
     ELECTION,
     ELECTION_WAIT,

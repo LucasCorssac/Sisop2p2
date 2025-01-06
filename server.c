@@ -587,6 +587,32 @@ int main(int argc, char *argv[])
 							handle_error("Error creating thread\n");
 					}
 				break;
+				// case REQ_REP_ACK:
+				// 	// FIND CLIENT IN TABLE
+				// 	printf("Found a REQ\n");
+				// 	int cli_cell = -1, i = 0;
+				// 	do
+				// 	{
+				// 		if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+				// 		{
+				// 			cli_cell = i;
+				// 			client_table[cli_cell].pckt_cli = pckt_cli;
+				// 		}
+				// 		i++;
+				// 	} while (cli_cell == -1 && i < MAX_CLIENTS);
+					
+				// 	// CREATE THREAD TO HANDLE REQUEST
+				// 	if (cli_cell != -1)
+				// 	{
+				// 		printf("client index is: %d\n", cli_cell);
+				// 		pthread_t id;
+				// 		int* cli_cell_ptr = malloc(sizeof(int));
+				// 		*cli_cell_ptr = cli_cell;
+				// 		n = pthread_create(&id, NULL, &process_request, cli_cell_ptr);
+				// 		if (n != 0)
+				// 			handle_error("Error creating thread\n");
+				// 	}
+				// break;
 			} 		
 			
 			for (int i = 0; i < num_servers; i++)

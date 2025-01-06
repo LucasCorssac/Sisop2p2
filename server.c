@@ -495,6 +495,7 @@ int main(int argc, char *argv[])
 			switch (pckt_cli.type)
 			{
 				case DISC:
+				{
 					printf("Found a discovery!\n");
 					int cli_idx = -1;
 					for (int i = 0; i < found_clients; i++)
@@ -519,15 +520,17 @@ int main(int argc, char *argv[])
 					{
 						if(server_list[i].alive && !server_list[i].me)
 						{
-							printf ("Sending cli_idx %d info to %s", cli_idx, inet_ntoa(server_list[i].serv_addr.sin_addr));
+							printf ("Sending cli_idx %d info to %s\n", cli_idx, inet_ntoa(server_list[i].serv_addr.sin_addr));
 							sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, 
 								(struct sockaddr *) &server_list[i].serv_addr, 
 								sizeof(server_list[i].serv_addr));
 						}
 						
 					}
+				}
 				break;
 				case DISC_REP_ACK:
+				{
 					printf("Found a disc rep ack\n");
 					int serv_idx = -1;
 					int live_replicas = 0;
@@ -560,8 +563,10 @@ int main(int argc, char *argv[])
 								handle_error("Error sendto");
 						}
 					}
+				}
 				break;
 				case REQ:
+				{
 					// FIND CLIENT IN TABLE
 					printf("Found a REQ\n");
 					int cli_cell = -1, i = 0;
@@ -586,6 +591,7 @@ int main(int argc, char *argv[])
 						if (n != 0)
 							handle_error("Error creating thread\n");
 					}
+				}
 				break;
 				// case REQ_REP_ACK:
 				// 	// FIND CLIENT IN TABLE

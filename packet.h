@@ -11,7 +11,7 @@ typedef enum PACKET_TYPE {
     AM_LEADER_ACK,
     DISC_REP,
     DISC_REP_ACK,
-    REP_REQ,
+    REQ_REP,
     REQ_REP_ACK,
     HEARTBEAT,
     ELECTION,
@@ -36,6 +36,11 @@ struct disc_rep_data
     struct sockaddr_in cli_addr;
     int cli_idx;
 };
+struct request_replica
+{
+    struct requisicao req;
+    int cli_idx;
+};
 typedef struct __packet
 {
     #ifdef DEBUG
@@ -44,6 +49,7 @@ typedef struct __packet
     packet_type type;
     union
     {
+        struct request_replica req_rep;
         struct disc_rep_data drep_dt;
         struct sockaddr_in serv_addr;
         struct requisicao req;

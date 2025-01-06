@@ -108,6 +108,22 @@ struct HEARTBEAT_PARAMS
 	int num_servers;
 };
 
+struct PRO_REQ_PARAMS
+{
+	struct SERVER_CELL* server_list_ptr;
+	int num_servers;
+	int cli_index;
+};
+
+struct REP_REQ_PARAMS
+{
+	struct SERVER_CELL* server_list_ptr;
+	int num_servers;
+	packet pckt_cli;
+};
+
+
+
 void print_timestamp()
 {
 	time_t t = time(NULL);
@@ -525,8 +541,7 @@ int main(int argc, char *argv[])
 							sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, 
 								(struct sockaddr *) &server_list[i].serv_addr, 
 								sizeof(server_list[i].serv_addr));
-						}
-						
+						}						
 					}
 				}
 				break;
@@ -587,9 +602,12 @@ int main(int argc, char *argv[])
 					{
 						printf("client index is: %d\n", cli_idx);
 						pthread_t id;
-						int* cli_cell_ptr = malloc(sizeof(int));
-						*cli_cell_ptr = cli_idx;
-						n = pthread_create(&id, NULL, &process_request, cli_cell_ptr);
+						struct PRO_REQ_PARAMS* pro_req_params_ptr = malloc(sizeof(struct PRO_REQ_PARAMS));
+						pro_req_params_ptr->num_servers = num_servers;
+						pro_req_params_ptr->server_list_ptr = server_list;
+						pro_req_params_ptr->cli_index = cli_idx;
+
+						n = pthread_create(&id, NULL, &process_request, pro_req_params_ptr);
 						if (n != 0)
 							handle_error("Error creating thread\n");
 					}
@@ -713,6 +731,10 @@ int main(int argc, char *argv[])
 					n = sendto(sockfd, &pckt_disc_rep_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
 					if (n < 0)
 						handle_error("ERROR sendto\n");
+				}
+				else if (pckt_cli.type == REQ_REP)
+				{
+					printf("Got REP REQ\n");
 				}
 			}			
 			elapsed_time = difftime(time(NULL), time_last_heartbeat);
@@ -985,9 +1007,14 @@ void* replicate_discovery(void *arg)
 
 void* process_request(void *arg)
 {
-	pthread_detach(pthread_self());		
+	pthread_detach(pthread_self());
 
-	int cli_index = *(int*)arg;
+	struct PRO_REQ_PARAMS params = *(struct PRO_REQ_PARAMS*)arg;
+
+	int num_servers = params.num_servers;
+	struct SERVER_CELL *server_list = params.server_list_ptr;
+	int cli_index = params.cli_index;
+
 	free(arg);
 	
 	pthread_mutex_lock(&client_table[cli_index].cli_lock);
@@ -1030,52 +1057,66 @@ void* process_request(void *arg)
 							   client_table[cli_index].last_total_sum
 							   );
 	}
-
-		pckt_ack_req.type = REQ_ACK;
-		pckt_ack_req.ack.value = client_table[cli_index].last_value;
-		pckt_ack_req.ack.seqn =  client_table[cli_index].last_seqn;
-		pckt_ack_req.ack.num_reqs = client_table[cli_index].last_num_reqs;
-		pckt_ack_req.ack.total_sum = client_table[cli_index].last_total_sum;
-
 		// SEND ACK
-		sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+		packet pckt_req_rep;
+		pckt_req_rep.type = REQ_REP;
+		pckt_req_rep.req_rep.req = pckt_cli.req;
+		pckt_req_rep.req_rep.cli_idx = cli_index;
+
+		for (int i = 0; i < num_servers; i++)
+		{
+			if(server_list[i].alive && !server_list[i].me)
+			{
+				printf ("Sending cli %d req %lld to %s\n", cli_index, pckt_req_rep.req_rep.req.seqn, inet_ntoa(server_list[i].serv_addr.sin_addr));
+				sendto(sockfd, &pckt_req_rep, sizeof(packet), 0, 
+					(struct sockaddr *) &server_list[i].serv_addr, 
+					sizeof(server_list[i].serv_addr));
+			}						
+		}
 
 		pthread_mutex_unlock(&client_table[cli_index].cli_lock);
 }
 
 void* replicate_request(void *arg)
 {
-	pthread_detach(pthread_self());		
+	pthread_detach(pthread_self());
 
-	int cli_index = *(int*)arg;
+	struct REP_REQ_PARAMS params = *(struct REP_REQ_PARAMS*)arg;
+
+	int num_servers = params.num_servers;
+	struct SERVER_CELL *server_list = params.server_list_ptr;
+	packet pckt_cli = params.pckt_cli;
+
+	int cli_index = pckt_cli.req_rep.cli_idx;
+
 	free(arg);
 	
 	pthread_mutex_lock(&client_table[cli_index].cli_lock);
 
-	packet pckt_ack_req, pckt_cli;
-	pckt_cli = client_table[cli_index].pckt_cli;
+	struct request_replica req_cli;
+	req_cli = pckt_cli.req_rep;
 
 	struct sockaddr_in cli_addr =  client_table[cli_index].cli_addr;
 	
 	if (client_table[cli_index].last_seqn ==
-		pckt_cli.req.seqn -1)
+		req_cli.req.seqn -1)
 	{
 		// UPDATE SHARED VALUES
 		pthread_mutex_lock(&shared_lock);
 			shared_values.total_reqs++;
-			shared_values.total_sum  += pckt_cli.req.value;
+			shared_values.total_sum  += req_cli.req.value;
 			client_table[cli_index].last_num_reqs = shared_values.total_reqs;
 			client_table[cli_index].last_total_sum = shared_values.total_sum;
 		pthread_mutex_unlock(&shared_lock);
 
 		// UPDATE CLIENT TABLE
 		client_table[cli_index].last_seqn++;
-		client_table[cli_index].last_value = pckt_cli.req.value;
+		client_table[cli_index].last_value = req_cli.req.value;
 		
 		print_timestamp(); printf("client %s id_req %lld value %lld num_reqs %lld total_sum %lld\n",
 								inet_ntoa(cli_addr.sin_addr),
-								pckt_cli.req.seqn,
-								pckt_cli.req.value,
+								req_cli.req.seqn,
+								req_cli.req.value,
 								client_table[cli_index].last_num_reqs,
 								client_table[cli_index].last_total_sum
 								);
@@ -1084,21 +1125,28 @@ void* replicate_request(void *arg)
 	{
 		print_timestamp(); printf("client %s DUP!! id_req %lld value %lld num_reqs %lld total_sum %lld\n",
 	 						   inet_ntoa(cli_addr.sin_addr),
-							   pckt_cli.req.seqn,
-							   pckt_cli.req.value,
+							   req_cli.req.seqn,
+							   req_cli.req.value,
 							   client_table[cli_index].last_num_reqs,
 							   client_table[cli_index].last_total_sum
 							   );
 	}
+		// // SEND ACK
+		// packet pckt_req_rep;
+		// pckt_req_rep.type = REQ_REP;
+		// pckt_req_rep.req_rep.req = client_table[cli_index].req;
+		// pckt_req_rep.req_rep.cli_idx = cli_index;
 
-		pckt_ack_req.type = REQ_ACK;
-		pckt_ack_req.ack.value = client_table[cli_index].last_value;
-		pckt_ack_req.ack.seqn =  client_table[cli_index].last_seqn;
-		pckt_ack_req.ack.num_reqs = client_table[cli_index].last_num_reqs;
-		pckt_ack_req.ack.total_sum = client_table[cli_index].last_total_sum;
-
-		// SEND ACK
-		sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+		// for (int i = 0; i < num_servers; i++)
+		// {
+		// 	if(server_list[i].alive && !server_list[i].me)
+		// 	{
+		// 		printf ("Sending cli %d req %lld to %s\n", cli_index, pckt_req_rep.req_rep.req.seqn, inet_ntoa(server_list[i].serv_addr.sin_addr));
+		// 		sendto(sockfd, &pckt_req_rep, sizeof(packet), 0, 
+		// 			(struct sockaddr *) &server_list[i].serv_addr, 
+		// 			sizeof(server_list[i].serv_addr));
+		// 	}						
+		// }
 
 		pthread_mutex_unlock(&client_table[cli_index].cli_lock);
 }

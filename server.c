@@ -59,6 +59,8 @@ typedef struct CLIENT_TABLE_CELL
 
 	int disc_rep_acks;
 	int req_rep_acks;
+
+	int got_req;
 	
     struct sockaddr_in cli_addr;
 
@@ -526,6 +528,7 @@ int main(int argc, char *argv[])
 					{
 						// client not found
 						client_table[found_clients].cli_addr = cli_addr;
+						client_table[found_clients].got_req = 1;
 						cli_idx = found_clients;
 						found_clients++;						
 					}
@@ -599,6 +602,7 @@ int main(int argc, char *argv[])
 						{
 							cli_idx = i;
 							client_table[cli_idx].pckt_cli = pckt_cli;
+							client_table[cli_idx].got_req = 1;
 						}
 					}					
 					// CREATE THREAD TO HANDLE REQUEST
@@ -678,6 +682,18 @@ int main(int argc, char *argv[])
 				{
 					live_replicas++;
 				}	
+			}
+			
+			packet pckt_new_leader;
+			pckt_new_leader.type = NEW_LEADER;
+			for (int i =0 ; i < found_clients; i++)
+			{
+				if (!client_table[i].got_req)
+				{
+					sendto(sockfd, &pckt_new_leader, sizeof(packet), 0, 
+					(struct sockaddr *) &client_table[i].cli_addr, 
+					sizeof(struct sockaddr_in));
+				}
 			}
 		}
 		if (server_state == ST_REPLICA_SYNC)

@@ -16,7 +16,8 @@ typedef enum PACKET_TYPE {
     HEARTBEAT,
     ELECTION,
     ELECTION_WAIT,
-    AMALIVE
+    AMALIVE,
+    NEW_LEADER
 } packet_type;
 
 struct requisicao

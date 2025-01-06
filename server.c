@@ -87,8 +87,9 @@ pthread_mutex_t shared_lock, disc_lock;
 struct REPLICA_CLIENT
 {
 	int found_client;
-	int total_reqs;
-	int total_sum;
+	long long last_seqn;
+	// int total_reqs;
+	// int total_sum;
 };
 
 struct SERVER_CELL
@@ -119,6 +120,7 @@ struct REP_REQ_PARAMS
 {
 	struct SERVER_CELL* server_list_ptr;
 	int num_servers;
+	int leader_idx;
 	packet pckt_cli;
 };
 
@@ -200,7 +202,7 @@ int main(int argc, char *argv[])
 	struct sockaddr_in brdcst_addr, my_addr, cli_addr, serv_addr;
 	int my_port;
 	
-	packet pckt_cli, pckt_ack_req;
+	packet pckt_cli;
 	
 	// GET PORT NUMBER
 	if (argc < 2) {
@@ -567,11 +569,13 @@ int main(int argc, char *argv[])
 						}
 						for (int i = 0; i < num_servers; i++)
 						{
+							printf("server %s has alive: %d and found client %d\n", inet_ntoa(server_list[i].serv_addr.sin_addr), server_list[i].alive, server_list[i].replica_clients[pckt_cli.drep_dt.cli_idx].found_client);
 							if (server_list[i].alive && !server_list[i].me)
 							{
-								all_found = all_found && server_list[serv_idx].replica_clients[pckt_cli.drep_dt.cli_idx].found_client;
+								all_found = all_found && server_list[i].replica_clients[pckt_cli.drep_dt.cli_idx].found_client;
 							}
 						}
+						printf("all  found %d\n", all_found);
 						if (all_found)
 						{
 							// send disc ack
@@ -613,32 +617,49 @@ int main(int argc, char *argv[])
 					}
 				}
 				break;
-				// case REQ_REP_ACK:
-				// 	// FIND CLIENT IN TABLE
-				// 	printf("Found a REQ\n");
-				// 	int cli_cell = -1, i = 0;
-				// 	do
-				// 	{
-				// 		if (client_table[i].cli_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
-				// 		{
-				// 			cli_cell = i;
-				// 			client_table[cli_cell].pckt_cli = pckt_cli;
-				// 		}
-				// 		i++;
-				// 	} while (cli_cell == -1 && i < MAX_CLIENTS);
-					
-				// 	// CREATE THREAD TO HANDLE REQUEST
-				// 	if (cli_cell != -1)
-				// 	{
-				// 		printf("client index is: %d\n", cli_cell);
-				// 		pthread_t id;
-				// 		int* cli_cell_ptr = malloc(sizeof(int));
-				// 		*cli_cell_ptr = cli_cell;
-				// 		n = pthread_create(&id, NULL, &process_request, cli_cell_ptr);
-				// 		if (n != 0)
-				// 			handle_error("Error creating thread\n");
-				// 	}
-				// break;
+				case REQ_REP_ACK:
+				{
+					printf("Found a disc rep ack\n");
+					int serv_idx = -1;
+					int all_sync = 1;
+					for (int i = 0; i < num_servers; i++)
+					{
+						if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+						{
+							serv_idx = i;
+						}
+					}
+					if (serv_idx != -1)
+					{
+						// replica hadn't found the client
+						if (server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn < pckt_cli.req_rep.req.seqn)
+						{
+							server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn = pckt_cli.req_rep.req.seqn;
+						}
+						for (int i = 0; i < num_servers; i++)
+						{
+							if (server_list[i].alive && !server_list[i].me)
+							{
+								all_sync = all_sync && 
+									(server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn == 
+										client_table[pckt_cli.req_rep.cli_idx].last_seqn);
+							}
+						}
+						if (all_sync)
+						{
+							// send disc ack
+							packet pckt_ack_req;
+							pckt_ack_req.type = REQ_ACK;
+							pckt_ack_req.ack.value = client_table[pckt_cli.req_rep.cli_idx].last_value;
+							pckt_ack_req.ack.seqn =  client_table[pckt_cli.req_rep.cli_idx].last_seqn;
+							pckt_ack_req.ack.num_reqs = client_table[pckt_cli.req_rep.cli_idx].last_num_reqs;
+							pckt_ack_req.ack.total_sum = client_table[pckt_cli.req_rep.cli_idx].last_total_sum;
+
+							sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &client_table[pckt_cli.req_rep.cli_idx].cli_addr, sizeof(struct sockaddr_in));
+						}
+					}
+				}
+				break;
 			} 		
 			
 			live_replicas = 0;
@@ -735,6 +756,18 @@ int main(int argc, char *argv[])
 				else if (pckt_cli.type == REQ_REP)
 				{
 					printf("Got REP REQ\n");
+					//printf("client index is: %d\n", cli_idx);
+
+					pthread_t id;
+					struct REP_REQ_PARAMS* rep_req_params_ptr = malloc(sizeof(struct REP_REQ_PARAMS));
+					rep_req_params_ptr->num_servers = num_servers;
+					rep_req_params_ptr->server_list_ptr = server_list;
+					rep_req_params_ptr->leader_idx = leader_idx;
+					rep_req_params_ptr->pckt_cli = pckt_cli;
+
+					n = pthread_create(&id, NULL, &replicate_request, rep_req_params_ptr);
+					if (n != 0)
+						handle_error("Error creating thread\n");
 				}
 			}			
 			elapsed_time = difftime(time(NULL), time_last_heartbeat);
@@ -1088,6 +1121,7 @@ void* replicate_request(void *arg)
 	packet pckt_cli = params.pckt_cli;
 
 	int cli_index = pckt_cli.req_rep.cli_idx;
+	int leader_idx = params.leader_idx;
 
 	free(arg);
 	
@@ -1131,11 +1165,16 @@ void* replicate_request(void *arg)
 							   client_table[cli_index].last_total_sum
 							   );
 	}
-		// // SEND ACK
-		// packet pckt_req_rep;
-		// pckt_req_rep.type = REQ_REP;
-		// pckt_req_rep.req_rep.req = client_table[cli_index].req;
-		// pckt_req_rep.req_rep.cli_idx = cli_index;
+		// SEND ACK
+		packet pckt_req_rep_ack;
+		pckt_req_rep_ack = pckt_cli;
+		pckt_req_rep_ack.type = REQ_REP_ACK;
+		// pckt_req_rep_ack.req_rep.req = pckt_cli.req;
+		// pckt_req_rep_ack.req_rep.cli_idx = cli_index;
+
+		int n = sendto(sockfd, &pckt_req_rep_ack, sizeof(packet), 0, (struct sockaddr *) &server_list[leader_idx].serv_addr, sizeof(struct sockaddr_in));
+		if (n < 0)
+			handle_error("ERROR sendto\n");
 
 		// for (int i = 0; i < num_servers; i++)
 		// {

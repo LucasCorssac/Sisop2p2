@@ -481,6 +481,7 @@ int main(int argc, char *argv[])
 	int st_election_wait_init = 0;
 	int st_replica_init = 0;
 	int st_replica_sync_init = 0;
+	int live_replicas = 0;
 	while (1) 
 	{
 		//printf("reading client packets\n");
@@ -533,16 +534,11 @@ int main(int argc, char *argv[])
 				{
 					printf("Found a disc rep ack\n");
 					int serv_idx = -1;
-					int live_replicas = 0;
 					for (int i = 0; i < num_servers; i++)
 					{
 						if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
 						{
 							serv_idx = i;
-						}
-						if (!server_list[i].me && server_list[i].alive)
-						{
-							live_replicas++;
 						}
 					}
 					if (serv_idx != -1)
@@ -619,6 +615,7 @@ int main(int argc, char *argv[])
 				// break;
 			} 		
 			
+			live_replicas = 0;
 			for (int i = 0; i < num_servers; i++)
 			{
 				if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
@@ -629,6 +626,10 @@ int main(int argc, char *argv[])
 				{
 					server_list[i].alive = 0;
 					printf("Server %s is now dead\n", inet_ntoa(server_list[i].serv_addr.sin_addr));
+				}
+				if (!server_list[i].me && server_list[i].alive)
+				{
+					live_replicas++;
 				}	
 			}
 		}

@@ -534,6 +534,7 @@ int main(int argc, char *argv[])
 				{
 					printf("Found a disc rep ack\n");
 					int serv_idx = -1;
+					int all_found = 1;
 					for (int i = 0; i < num_servers; i++)
 					{
 						if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
@@ -549,7 +550,14 @@ int main(int argc, char *argv[])
 							client_table[pckt_cli.drep_dt.cli_idx].disc_rep_acks++;
 							server_list[serv_idx].replica_clients[pckt_cli.drep_dt.cli_idx].found_client = 1;
 						}
-						if (client_table[pckt_cli.drep_dt.cli_idx].disc_rep_acks == live_replicas)
+						for (int i = 0; i < num_servers; i++)
+						{
+							if (server_list[i].alive && !server_list[i].me)
+							{
+								all_found = all_found && server_list[serv_idx].replica_clients[pckt_cli.drep_dt.cli_idx].found_client;
+							}
+						}
+						if (all_found)
 						{
 							// send disc ack
 							packet pckt_ack_disc;

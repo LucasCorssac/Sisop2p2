@@ -116,6 +116,7 @@ struct PRO_REQ_PARAMS
 	struct SERVER_CELL* server_list_ptr;
 	int num_servers;
 	int cli_index;
+	int live_replicas;
 };
 
 struct REP_REQ_PARAMS
@@ -502,6 +503,8 @@ int main(int argc, char *argv[])
 	int st_replica_init = 0;
 	int st_replica_sync_init = 0;
 	int live_replicas = 0;
+
+	time_t temporizer = time(NULL);
 	while (1) 
 	{
 		//printf("reading client packets\n");
@@ -532,22 +535,34 @@ int main(int argc, char *argv[])
 						cli_idx = found_clients;
 						found_clients++;						
 					}
-					// send disc reps
-					// must contain cli_addr and cli_idx
-					packet pckt_disc_rep;
-					pckt_disc_rep.type = DISC_REP;
-					pckt_disc_rep.drep_dt.cli_idx = cli_idx;
-					pckt_disc_rep.drep_dt.cli_addr = cli_addr;
-					for (int i = 0; i < num_servers; i++)
+					if (live_replicas > 0)
 					{
-						if(server_list[i].alive && !server_list[i].me)
+						// send disc reps
+						// must contain cli_addr and cli_idx
+						packet pckt_disc_rep;
+						pckt_disc_rep.type = DISC_REP;
+						pckt_disc_rep.drep_dt.cli_idx = cli_idx;
+						pckt_disc_rep.drep_dt.cli_addr = cli_addr;
+						for (int i = 0; i < num_servers; i++)
 						{
-							printf ("Sending cli_idx %d info to %s\n", cli_idx, inet_ntoa(server_list[i].serv_addr.sin_addr));
-							sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, 
-								(struct sockaddr *) &server_list[i].serv_addr, 
-								sizeof(server_list[i].serv_addr));
-						}						
+							if(server_list[i].alive && !server_list[i].me)
+							{
+								printf ("Sending cli_idx %d info to %s\n", cli_idx, inet_ntoa(server_list[i].serv_addr.sin_addr));
+								sendto(sockfd, &pckt_disc_rep, sizeof(packet), 0, 
+									(struct sockaddr *) &server_list[i].serv_addr, 
+									sizeof(server_list[i].serv_addr));
+							}						
+						}
 					}
+					else
+					{
+						// send disc ack
+						packet pckt_ack_disc;
+						pckt_ack_disc.type = DISC_ACK;
+						n = sendto(sockfd, &pckt_ack_disc, sizeof(packet), 0, (struct sockaddr *) &cli_addr, sizeof(cli_addr));
+						if (n < 0)
+							handle_error("Error sendto");
+					}					
 				}
 				break;
 				case DISC_REP_ACK:
@@ -614,6 +629,7 @@ int main(int argc, char *argv[])
 						pro_req_params_ptr->num_servers = num_servers;
 						pro_req_params_ptr->server_list_ptr = server_list;
 						pro_req_params_ptr->cli_index = cli_idx;
+						pro_req_params_ptr->live_replicas = live_replicas;
 
 						n = pthread_create(&id, NULL, &process_request, pro_req_params_ptr);
 						if (n != 0)
@@ -664,26 +680,38 @@ int main(int argc, char *argv[])
 					}
 				}
 				break;
+				case AMALIVE:
+				{
+					for (int i = 0; i < num_servers; i++)
+					{	
+						if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+						{
+							time(&server_list[i].time_last_alive);
+						}
+					}
+				}
+				break;
 			} 		
 			
 			live_replicas = 0;
-			for (int i = 0; i < num_servers; i++)
-			{
-				if (server_list[i].serv_addr.sin_addr.s_addr == cli_addr.sin_addr.s_addr)
+			// if (difftime(time(NULL), temporizer) > 1)
+			// {
+				for (int i = 0; i < num_servers; i++)
 				{
-					time(&server_list[i].time_last_alive);
+					//printf("Server idx: %d ip: %s is alive: %d is me: %d is leader: %d\n", i, inet_ntoa(server_list[i].serv_addr.sin_addr), server_list[i].alive, server_list[i].me, server_list[i].leader);
+
+					if (server_list[i].alive && !server_list[i].me && (difftime(time(NULL), server_list[i].time_last_alive) > WAIT_TIME))
+					{
+						server_list[i].alive = 0;
+						printf("Server %s is now dead\n", inet_ntoa(server_list[i].serv_addr.sin_addr));
+					}
+					if (!server_list[i].me && server_list[i].alive)
+					{
+						live_replicas++;
+					}	
 				}
-				else if (server_list[i].alive && !server_list[i].me && (difftime(time(NULL), server_list[i].time_last_alive) > WAIT_TIME))
-				{
-					server_list[i].alive = 0;
-					printf("Server %s is now dead\n", inet_ntoa(server_list[i].serv_addr.sin_addr));
-				}
-				if (!server_list[i].me && server_list[i].alive)
-				{
-					live_replicas++;
-				}	
-			}
-			
+				time(&temporizer);
+			//}			
 			packet pckt_new_leader;
 			pckt_new_leader.type = NEW_LEADER;
 			for (int i =0 ; i < found_clients; i++)
@@ -933,7 +961,8 @@ int main(int argc, char *argv[])
 				if (server_list[i].me)
 				{
 					leader_idx = i;
-					server_list[i].alive = 0;
+					server_list[i].leader = 1;
+					server_list[i].alive = 1;
 				}
 				if (server_list[i].alive)
 					time(&server_list[i].time_last_alive);
@@ -1063,6 +1092,7 @@ void* process_request(void *arg)
 	int num_servers = params.num_servers;
 	struct SERVER_CELL *server_list = params.server_list_ptr;
 	int cli_index = params.cli_index;
+	int live_replicas = params.live_replicas;
 
 	free(arg);
 	
@@ -1106,22 +1136,37 @@ void* process_request(void *arg)
 							   client_table[cli_index].last_total_sum
 							   );
 	}
-		// SEND ACK
-		packet pckt_req_rep;
-		pckt_req_rep.type = REQ_REP;
-		pckt_req_rep.req_rep.req = pckt_cli.req;
-		pckt_req_rep.req_rep.cli_idx = cli_index;
-
-		for (int i = 0; i < num_servers; i++)
+		// REPLICATE OR SEND ACK
+		if (live_replicas > 0)
 		{
-			if(server_list[i].alive && !server_list[i].me)
+			packet pckt_req_rep;
+			pckt_req_rep.type = REQ_REP;
+			pckt_req_rep.req_rep.req = pckt_cli.req;
+			pckt_req_rep.req_rep.cli_idx = cli_index;
+
+			for (int i = 0; i < num_servers; i++)
 			{
-				printf ("Sending cli %d req %lld to %s\n", cli_index, pckt_req_rep.req_rep.req.seqn, inet_ntoa(server_list[i].serv_addr.sin_addr));
-				sendto(sockfd, &pckt_req_rep, sizeof(packet), 0, 
-					(struct sockaddr *) &server_list[i].serv_addr, 
-					sizeof(server_list[i].serv_addr));
-			}						
+				if(server_list[i].alive && !server_list[i].me)
+				{
+					printf ("Sending cli %d req %lld to %s\n", cli_index, pckt_req_rep.req_rep.req.seqn, inet_ntoa(server_list[i].serv_addr.sin_addr));
+					sendto(sockfd, &pckt_req_rep, sizeof(packet), 0, 
+						(struct sockaddr *) &server_list[i].serv_addr, 
+						sizeof(server_list[i].serv_addr));
+				}						
+			}	
 		}
+		else
+		{
+			pckt_ack_req.type = REQ_ACK;
+			pckt_ack_req.ack.value = client_table[cli_index].last_value;
+			pckt_ack_req.ack.seqn =  client_table[cli_index].last_seqn;
+			pckt_ack_req.ack.num_reqs = client_table[cli_index].last_num_reqs;
+			pckt_ack_req.ack.total_sum = client_table[cli_index].last_total_sum;
+
+			// SEND ACK
+			sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
+		}
+		
 
 		pthread_mutex_unlock(&client_table[cli_index].cli_lock);
 }

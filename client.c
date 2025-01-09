@@ -25,6 +25,8 @@
 
 #include "packet.h"
 
+#define WAIT_TIME 1
+
 void print_timestamp()
 {
 	time_t t = time(NULL);
@@ -100,7 +102,7 @@ int main(int argc, char *argv[])
 	#endif
 
 	// SET SOCKET REQUEST TIMEOUT PARAMETERS
-	struct timeval timeout = {.tv_sec = 0, .tv_usec = 10000}; // 10 ms
+	struct timeval timeout = {.tv_sec = 0, .tv_usec = 100000}; // 100 ms
 
 	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
 		perror("setsockopt failed");
@@ -168,6 +170,8 @@ int main(int argc, char *argv[])
 	char *line = NULL;
     size_t len = 0;
 
+	time_t temporizer = time (NULL);
+
 	pckt_req.type = REQ;
 
 	while (1)
@@ -195,6 +199,8 @@ int main(int argc, char *argv[])
 		printf("Sending packet\n");
 
 		sendto(sockfd, &pckt_req, sizeof(packet), 0, (struct sockaddr *) &serv_addr, serv_addr_len);
+		//sendto(sockfd, &pckt_req, sizeof(packet), 0, (struct sockaddr *) &serv_addr, serv_addr_len);
+		time(&temporizer);
 
 		debug_print("Waiting Response\n");
 
@@ -238,6 +244,8 @@ int main(int argc, char *argv[])
 				}
 			}
 		} while (get_again);
+
+		//while(difftime(time(NULL), temporizer) < WAIT_TIME){}
 		
 	}
 

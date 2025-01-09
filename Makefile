@@ -38,7 +38,16 @@ docker_server:
 run_client: docker_client
 	docker run --rm -it --name $(CLIENT_CONTAINER_NAME) $(CLIENT_IMAGE_NAME) $(ARGS)
 run_server: docker_server
-	docker run --rm -it --name $(SERVER_CONTAINER_NAME) $(SERVER_IMAGE_NAME) $(ARGS)
+	docker run -it --name $(SERVER_CONTAINER_NAME) $(SERVER_IMAGE_NAME) $(ARGS)
+
+run_client_rands2: docker_client
+	docker run --rm -i --name $(CLIENT_CONTAINER_NAME) $(CLIENT_IMAGE_NAME) $(ARGS) < rand2
+
+run_client_rands3: docker_client
+	docker run --rm -i --name $(CLIENT_CONTAINER_NAME) $(CLIENT_IMAGE_NAME) $(ARGS) < rand3
+
+run_client_rands4: docker_client
+	docker run --rm -i --name $(CLIENT_CONTAINER_NAME) $(CLIENT_IMAGE_NAME) $(ARGS) < rand4
 
 # docker_test_servers: docker_server
 # 	@for i in $(shell seq 1 $(INSTANCE_COUNT)); do \

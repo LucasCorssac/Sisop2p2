@@ -44,9 +44,6 @@ struct request_replica
 };
 typedef struct __packet
 {
-    #ifdef DEBUG
-        int id;
-    #endif
     packet_type type;
     union
     {

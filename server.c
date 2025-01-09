@@ -639,7 +639,7 @@ int main(int argc, char *argv[])
 				break;
 				case REQ_REP_ACK:
 				{
-					printf("Found a disc rep ack\n");
+					printf("Found a req rep ack\n");
 					int serv_idx = -1;
 					int all_sync = 1;
 					for (int i = 0; i < num_servers; i++)
@@ -652,16 +652,17 @@ int main(int argc, char *argv[])
 					if (serv_idx != -1)
 					{
 						// replica hadn't found the client
-						if (server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn < pckt_cli.req_rep.req.seqn)
+						if (client_table[pckt_cli.req_rep.cli_idx].last_seqn == pckt_cli.req_rep.req.seqn)
 						{
 							server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn = pckt_cli.req_rep.req.seqn;
 						}
 						for (int i = 0; i < num_servers; i++)
 						{
+							printf("server %s has alive: %d and is me: %d and has client %d last seqn %d\n", inet_ntoa(server_list[i].serv_addr.sin_addr), server_list[i].alive, server_list[i].me, pckt_cli.req_rep.cli_idx, server_list[i].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn);
 							if (server_list[i].alive && !server_list[i].me)
 							{
 								all_sync = all_sync && 
-									(server_list[serv_idx].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn == 
+									(server_list[i].replica_clients[pckt_cli.req_rep.cli_idx].last_seqn == 
 										client_table[pckt_cli.req_rep.cli_idx].last_seqn);
 							}
 						}
@@ -676,6 +677,7 @@ int main(int argc, char *argv[])
 							pckt_ack_req.ack.total_sum = client_table[pckt_cli.req_rep.cli_idx].last_total_sum;
 
 							sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &client_table[pckt_cli.req_rep.cli_idx].cli_addr, sizeof(struct sockaddr_in));
+							pthread_mutex_unlock(&client_table[pckt_cli.req_rep.cli_idx].cli_lock);
 						}
 					}
 				}
@@ -713,11 +715,12 @@ int main(int argc, char *argv[])
 				time(&temporizer);
 			//}			
 			packet pckt_new_leader;
-			pckt_new_leader.type = NEW_LEADER;
+			pckt_new_leader.type = NEW_LEADER;			
 			for (int i =0 ; i < found_clients; i++)
 			{
 				if (!client_table[i].got_req)
 				{
+					printf("New leader message \n");
 					sendto(sockfd, &pckt_new_leader, sizeof(packet), 0, 
 					(struct sockaddr *) &client_table[i].cli_addr, 
 					sizeof(struct sockaddr_in));
@@ -1095,8 +1098,6 @@ void* process_request(void *arg)
 	int live_replicas = params.live_replicas;
 
 	free(arg);
-	
-	pthread_mutex_lock(&client_table[cli_index].cli_lock);
 
 	packet pckt_ack_req, pckt_cli;
 	pckt_cli = client_table[cli_index].pckt_cli;
@@ -1106,6 +1107,7 @@ void* process_request(void *arg)
 	if (client_table[cli_index].last_seqn ==
 		pckt_cli.req.seqn -1)
 	{
+		pthread_mutex_lock(&client_table[cli_index].cli_lock);
 		// UPDATE SHARED VALUES
 		pthread_mutex_lock(&shared_lock);
 			shared_values.total_reqs++;
@@ -1157,6 +1159,9 @@ void* process_request(void *arg)
 		}
 		else
 		{
+			for (int i = 0; i < 10000000; i++)
+				printf("NO LIVE REPLICAS, sending ack to client!\n");
+			
 			pckt_ack_req.type = REQ_ACK;
 			pckt_ack_req.ack.value = client_table[cli_index].last_value;
 			pckt_ack_req.ack.seqn =  client_table[cli_index].last_seqn;
@@ -1167,8 +1172,6 @@ void* process_request(void *arg)
 			sendto(sockfd, &pckt_ack_req, sizeof(packet), 0,(struct sockaddr *) &cli_addr, sizeof(cli_addr));
 		}
 		
-
-		pthread_mutex_unlock(&client_table[cli_index].cli_lock);
 }
 
 void* replicate_request(void *arg)
@@ -1228,7 +1231,9 @@ void* replicate_request(void *arg)
 	}
 		// SEND ACK
 		packet pckt_req_rep_ack;
-		pckt_req_rep_ack = pckt_cli;
+		pckt_req_rep_ack.req_rep.cli_idx = cli_index;
+		pckt_req_rep_ack.req_rep.req.seqn = client_table[cli_index].last_seqn;
+		pckt_req_rep_ack.req_rep.req.value = client_table[cli_index].last_value;
 		pckt_req_rep_ack.type = REQ_REP_ACK;
 		// pckt_req_rep_ack.req_rep.req = pckt_cli.req;
 		// pckt_req_rep_ack.req_rep.cli_idx = cli_index;
